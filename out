@@ -1,1 +1,0 @@
-{"errorMessage": "0", "errorType": "KeyError", "stackTrace": [["/var/task/lambda_function.py", 41, "lambda_handler", "check_images(s3, bucket_path)"], ["/var/task/lambda_function.py", 147, "check_images", "for file in response[0]['Contents']:"]]}
