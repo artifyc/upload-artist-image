@@ -2,184 +2,208 @@ import json
 import boto3
 import uuid
 import os
+import io
+import sys
 from botocore.exceptions import ClientError
 import constants as cnst
 from boto3.dynamodb.conditions import Key, Attr
-from PIL import Image
+from urllib.parse import unquote_plus
+import PIL
+from PIL import Image, ImageDraw, ImageFont 
+from PIL.Image import core as _imaging
 import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Steps:
-#   Check if image exists on S3 Buffer directory.   (TRY CATCH)
-#        If doesn't exist, return with error. Else continue
-#   Grab User metadata from Users Table             (TRY CATCH)
-#       if User doesn't exist, return with error. Else continue
-#   From user object grab S3 Image Path             (TRY CATCH)
-#   Grab amount of data user has saved              (TRY CATCH)
-#   Check if user is not going over max allowed data stored
-#   Download image                                  (TRY CATCH)
-#   Transform image as needed                       (TRY CATCH)
-#   Store file onto s3                              (TRY CATCH)
-#   Delete image from buffer directory              (TRY CATCH - Trigger alert or send to queue for manual/retry deletion or have
-                                  # a job that triggers to cleanup buffer regularly)
-# Upload Image metadata
-# Update user metadata if needed
+'''
+SAMPLE PAYLOAD FOR IMAGE UPLOAD EVENT
+'{"ResponseMetadata":
+    {"RequestId": "9F112A3FC0DF4BF0",
+    "HostId": "c8oYc6QCgtTSChKmz/EqR3cSjARDUx7rPx3TsdjHErDHz/xljlLOsxssjgNYWV2216T9lIuMhEA=",
+    "HTTPStatusCode": 200,
+    "HTTPHeaders":
+        {"x-amz-id-2": "c8oYc6QCgtTSChKmz/EqR3cSjARDUx7rPx3TsdjHErDHz/xljlLOsxssjgNYWV2216T9lIuMhEA=",
+        "x-amz-request-id": "9F112A3FC0DF4BF0",
+        "date": "Wed, 13 Nov 2019 02:07:16 GMT",
+        "x-amz-bucket-region": "us-east-1",
+        "content-type": "application/xml",
+        "transfer-encoding": "chunked",
+        "server": "AmazonS3"},
+    "RetryAttempts": 0},
+    "IsTruncated": "False",
+    "Contents": [
+        {
+            "Key": "upload-buffer/temp-bucket-299211192/",
+            "LastModified": "datetime.datetime(2019, 10, 29, 23, 34, 29, tzinfo=tzlocal())",
+            "ETag": "d41d8cd98f00b204e9800998ecf8427e",
+            "Size": 0,
+            "StorageClass": "STANDARD"
+        },
+        {
+            "Key": "upload-buffer/temp-bucket-299211192/kaz.png",
+            "LastModified": "datetime.datetime(2019, 11, 13, 2, 7, 14, tzinfo=tzlocal())",
+            "ETag": "ee72b223ba8463ba5e1b42ca1662ab8f",
+            "Size": 102883,
+            "StorageClass": "STANDARD"}
+    ],
+    "Name": "artifyc-user-images-qa",
+    "Prefix": "upload-buffer/temp-bucket-299211192/",
+    "Delimiter": "/",
+    "MaxKeys": 1000,
+    "EncodingType": "url",
+    "KeyCount": 3
+}'
+'''
 
-# KYLE PUT YOUR SHIT INTO METHODS I DON'T WANT ANY BELTON ZHONG CODE IN THIS BITCH
+# Steps:
+# obtain metadata from event photo file
+# if portfolio, trigger portfolio workflow
+# 1. convert image
+# 2. watermark image and place watermark as requested
+# 3. convert the image to consistent sizing
+# 4. if framing the image, convert the frame color
+# 5. superimpose the frame around the edges of the image
+# 6. upload the final images to S3 under /upload-final/artistuuid/commissiontype/ key
+# 7. delete image from upload buffer
+# 8. update dynamodb to have paths of each image
+
+# if profile image, trigger profile image
+# if delivery, handle delivery
+
+# I DON'T WANT ANY BELTON ZHONG CODE IN THIS BITCH
+
 
 def lambda_handler(event, context):
 
-    bucket_path = "/upload-buffer/temp-bucket-299211192/"
-    dynamo = boto3.resource('dynamodb')
+    client = boto3.client('s3')
 
-    s3 = boto3.client('s3')
-    bucket = cnst.user_images_bucket_name
-    table_name = cnst.users_table_name
-    #file_name = event['file_name']
+    # the bucket name will always get listed as being in the contents
+    # below we narrow just so that we're obtaining the image
+    for file in event['Contents']:
+        if file['Key'].endswith(('.png', '.jpg', '.tiff')):
+            response = client.head_object(Bucket=os.environ["s3_bucket"], Key=file['Key'])
+            getattr(sys.modules[__name__], "handle_%s" % response['Metadata']['mode'])(file['Key'], response, client)
 
-    check_images(s3, bucket_path)
-
-    return {
-        'statusCode': 200,
-        'body': json.dumps('Conversion Executed OK')
-    }
-
-  # Check if image exists on S3 Buffer Directory
-    file_key = cnst.s3_images_buffer_key + "/"+file_name
-    try:
-        # Amazon S3/artifyc-user-images-qa/upload-buffer/logo.png
-
-        s3.head_object(Bucket=cnst.user_images_bucket_name, Key=file_key)
-    except ClientError as e:
-        # Not found
-        print(e)
-        return "Error Occurred Queryimg for image in buffer"
-
-    # Get user path from dynamodb for s3. Also Check if user exists
-    user_id = event['user_id']
-    table = dynamo.Table('Users')
-
-    try:
-
-        user_object = table.query(
-            KeyConditionExpression=Key('user_id').eq(user_id)
-        )
-        print(user_object)
-        user_image_s3_path = user_object['Items'][0]['s3_images_path']
-    except ClientError as e:
-        print(e)
-        return e
-        # Error Occurred
-
-    # Get s3 key from user_info
-    # user_image_s3_path = user_object['s3_images_path']
-
-    # Download Image
-    try:
-        image = s3.get_object(
-            Bucket=cnst.user_images_bucket_name, Key=file_key)
-    except ClientError:
-        return "Error occurred downloading image"
-    print(image)
-
-    # Transform Image using PILLOW
-
-    # Move image from buffer directory to user's image directory if it doesn't go over size limit
-    try:
-        s3.upload_file(image, bucket, user_image_s3_path)
-    except ClientError:
-        pass
-    return "early cut off test"
-    # Upload image metadata
-    image_id = "test"
-
-    # Generate UUID for image
-
-    dynamo.put_item(
-        Table_Name='',
-        Item={
-            'user_id': {'S': user_id},
-            'image_id': {'S': image_id},
-            'uploaded_timestamp': {'S': current_timestamp},
-            'tags': {'S': tags_list},
-        }
-    )
-
-    # Might need to query user to get timestamp from user db before updating.
-    # Or redo user with no sort key
-
-    # Update user metadata if needed
-    dynamo.update_item(
-        Table_Name='',
-        Key={
-            'user_id': '',
-        },
-        AttributeUpdates={
-            'yeet': '123',
-        }
-    )
+    # this will just dynamically run the below method
+    # that corresponds with what mode the uploaded picture has
 
     return {
         'statusCode': 200,
         'body': json.dumps('Image Successfully Uploaded!')
     }
 
-# check image path name, see if it's jpg, if it is, return the path
-# otherwise, convert and reupload with new name, return path
-# todo: add try-catches
+# Uploading Portfolio Images 
+#   if portfolio, trigger portfolio workflow
+#       1. convert image
+#       2. watermark image and place watermark as requested
+#       3. convert the image to consistent sizing
+#       4. if framing the image, convert the frame color
+#       5. superimpose the frame around the edges of the image
+#       6. upload the final images to S3 under /upload-final/artistuuid/commissiontype/ key
+#       7. delete image from upload buffer
+#       7(1/2). delete image from /tmp/ on the lambda
+#       8. update dynamodb to have paths of each image
 
-# client = s3 client previously created
-# prefix = the filepath within the buffer bucket with particular user's data
-# delimiter = "/"
+def handle_portfolio(key, metadata, client):
 
-def check_images(client, prefix):
+    logging.info("Entered portfolio method...")
+    # parse the filename from the key
+    filename = key.split("/")[len(key.split("/"))-1]
+    logging.info(filename)
+    # fetch actual photo and download it to the lambda
+    client.download_file(os.environ["s3_bucket"], key, "/tmp/" + filename)
+    
+    # step 1. converting + resize image
+    for size in [s for s in os.environ if "width" in s]:
+            logging.info(os.environ[size])
+            image_buffer = convert_and_resize_image(client, filename, os.environ[size])
+            image_buffer = watermark_image_with_text(image_buffer, filename, "#000000", "Helvetica.ttf")
+            response = upload_image(client, metadata, image_buffer, os.environ[size])
+
+            logging.info(response)
+    
+
+def handle_profile():
+    return
+
+# TODO
 
 
-    response = client.list_objects_v2(
-        Bucket=cnst.user_images_bucket_name,
-        Delimiter="/",
-        Prefix=prefix
-    )
+def handle_delivery():
+    return
 
-    logging.info("found images {} in bucket {}".format(response['Contents'], cnst.user_images_bucket_name))
+    # check image path name, see if it's jpg, if it is, return the path
+    # otherwise, convert and reupload with new name, return path
+    # todo: add try-catches
 
-    # parse through responded files
-    # s3 is fucking stupid and returns the folder as an object
-    # if the key ends with a filetype that needs conversion, convert it
-    for file in response['Contents']:
-        if file['Key'].endswith(('.png', '.jpeg', '.tiff')):
-            convert(client, prefix, file['Key'])
+    # client = s3 client previously created
+    # prefix = the filepath within the buffer bucket with particular user's data
+    # delimiter = "/"
 
-    # all files converted
-    return True
 
-# todo: add encryption SSECustomerAlgorithm = AES256 ?
+# todo: add encryption?? SSECustomerAlgorithm = AES256 ?
 # returns converted file
+# def upload_to_new_s3(client, file)
 
-
-def convert(client, prefix, filename):
-
+def upload_image(client, metadata, image, size):
     # first fetch actual object
-    response = client.get_object(
-        Bucket=cnst.user_images_bucket_name,
-        Key=prefix + filename
-    )
+    logging.info(size)
+    prefix = os.environ['Bucket'] + '/upload-final/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
 
-    logging.info("photo fetched: {}".format(response))
+    imgByteArr = io.BytesIO()
+    image.save(imgByteArr)
+    imgByteArr = imgByteArr.getvalue()
 
     img_id = uuid.uuid4()
 
-    image = Image.open(response['Body'])
-    rgb_im = image.convert('RGB')
-    rgb_im.save('{}.jpg'.format(img_id))
-
     response = client.put_object(
-        Body=rgb_im,
-        Bucket=cnst.user_images_bucket_name,
-        Key=prefix + img_id
+        Body=imgByteArr.getvalue(),
+        Bucket=os.environ["s3_bucket"],
+        Key=prefix + str(img_id) + ".jpeg"
     )
 
-    logging.info("photo uploaded: {}".format(response))
+    return response
 
-    return True
+def watermark_image_with_text(buffer, filename, color, fontfamily, text="Artifyc"):
+
+    imageWatermark = Image.new('RGB', buffer.size, (255, 255, 255, 0))
+
+    draw = ImageDraw.Draw(imageWatermark)
+    
+    width, height = buffer.size
+    margin = 10
+    font = ImageFont.truetype(fontfamily, int(height / 20))
+    textWidth, textHeight = draw.textsize(text, font)
+    x = width - textWidth - margin
+    y = height - textHeight - margin
+
+    draw.text((x, y), text, color, font)
+
+    return Image.alpha_composite(buffer, imageWatermark)
+
+def convert_and_resize_image(client, filename, size):
+    """
+    Resizes proportionally an image using `size` as the base width.
+    Args:
+    <bytesIO> body - the image content in a buffer.
+    <str> extension - the image extension.
+    <int> size - base width used to the resize process.
+    Returns:
+    <bytesIO> buffer - returns the image content resized.
+    """
+    path = "/tmp/" + filename
+    with open(path, 'rb+') as content_file:
+
+        content = content_file.read()
+        img = Image.open(io.BytesIO(content)).convert('RGB')
+
+        wpercent = (float(size) / float(img.size[0]))
+        hsize = int((float(img.size[1]) * float(wpercent)))
+        img = img.resize((int(size), hsize), PIL.Image.ANTIALIAS)
+
+        buffer = io.BytesIO()
+        format = 'JPEG'
+
+        img.save(buffer, format)
+
+        return img
