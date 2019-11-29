@@ -1,11 +1,12 @@
-import os, shutil, uuid, io, sys, PIL
+import os, shutil, uuid, io, sys
 import logging
 from math import floor
 from ast import literal_eval
 from urllib.parse import unquote_plus
-from PIL import Image, ImageDraw, ImageFont 
 from transforms import RGBTransform
+from PIL import Image, ImageDraw, ImageFont 
 from lambda_function import lambda_handler as handler
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -56,6 +57,7 @@ def validate_image(imgpath, filename, client=None, test=False):
 
 """
 Tint the frame such that it becomes the color the customer requested
+On failure default to gold frame
 Args:
 <bytesIO> image - image content in a buffer.
 <str> color - the color in hexadecimal representation.
@@ -63,13 +65,22 @@ Returns:
 <bytesIO> image - image content of tinted frame in a buffer.
 """
 # TODO: possibly need to convert the gold frame into greyscale
-def tint_frame(image, color):
+def tint_frame(image, color, size, local=False):
+    try:
+        value = color.lstrip('#')
+        lv = len(value)
+        converted = tuple(int(value[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
 
-    value = color.lstrip('#')
-    lv = len(value)
-    converted = tuple(int(value[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
+        image = RGBTransform().mix_with((converted),factor=.30).applied_to(image)
 
-    image = RGBTransform().mix_with((converted),factor=.30).applied_to(image)
+    except Exception as e:
+        logging.info("\ttint_frame failed with exception: {}. Falling back to gold...".format(e))
+        path = "assets/assets/frames/gold/" if local else "assets/frames/gold/"
+        filename = "framemed.png" if "med" in size else "framesmall.png"
+
+        # open regular gold frame file
+        with open(path + filename, 'rb+') as content_file:
+            image = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
 
     return image
     
@@ -208,7 +219,6 @@ def watermark_image_with_text(buffer, filename, metadata, text="Artifyc"):
 #                         14 px left 
 #                         14 px right
 #                        18px bottom
-# read frame from S3
 """
 Watermarks medium size images with `Artifyc`.
 Args:
@@ -222,7 +232,7 @@ Returns:
 """
 def place_frame_over_image(buffer, size, client, color=None):
     # determine whether to use med or small frame
-    filename = "framemed.png" if "med" in size else ""
+    filename = "framemed.png" if "med" in size else "framesmall.png"
     path = "assets/frames/" + filename
 
     #TODO: figure out how to tint the frame color based on passed color
@@ -230,7 +240,7 @@ def place_frame_over_image(buffer, size, client, color=None):
         content = content_file.read()
         frame = Image.open(io.BytesIO(content)).convert('RGBA')
 
-        if color is not None: frame = tint_frame(frame, color)
+        if color is not None: frame = tint_frame(frame, color, size)
 
         framed_image = Image.alpha_composite(buffer, frame).convert('RGB')
 

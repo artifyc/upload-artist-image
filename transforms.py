@@ -1,4 +1,5 @@
 """A library for describing and applying affine transforms to PIL images.
+This is used to tint the frames to what the users have given to us. 
 Credit @wchargin on github."""
 import numpy as np
 import PIL.Image

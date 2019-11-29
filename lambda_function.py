@@ -1,6 +1,7 @@
-import json, boto3, uuid, os, io, sys, logging, argparse
-from botocore.exceptions import ClientError
-from util import upload_image, convert_and_resize_portfolio_image, watermark_image_with_text, place_frame_over_image, cleanup_temp, validate_image
+import json, uuid, os, io, sys, logging, argparse
+if os.environ.get("s3_bucket") is not None: import boto3
+#from botocore.exceptions import ClientError
+from util import *
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -102,10 +103,6 @@ def handle_delivery():
     # delimiter = "/"
 
 
-"""
-Main function, this is only ever invoked from local and used for testing
-"""
-if __name__ == "__main__": pass
 """
 If any issue occurs during the processing of the image, the program
 will catch the error and execute this, putting a "wrong" image???
