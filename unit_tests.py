@@ -176,7 +176,8 @@ def upload_image_test(local=False):
         if not upload_image(client, metadata, image, "small", 4): logging.info("\tTest Case VI... Passed") 
         else: return False
 
-         # Test Case VII: Actual successful case of photo upload occurs
+        # Test Case VII: Actual successful case of photo upload occurs
+        # upload a photo, verify the respose is ok, then cleanup the photo from S3 before passing
         try:
             response = upload_image(client, metadata, image, "small")
             if not response['Version']: 
