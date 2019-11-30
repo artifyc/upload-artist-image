@@ -68,7 +68,7 @@ def handle_portfolio(client, key, filename, metadata):
         else:
             pass
 
-        response = upload_image(client, metadata, image_buffer, os.environ[size])
+        response = upload_image(client, metadata, image_buffer, size)
 
         logging.info(response)
 

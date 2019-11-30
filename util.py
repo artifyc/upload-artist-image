@@ -1,4 +1,4 @@
-import os, shutil, uuid, io, sys
+import os, shutil, uuid, io, sys, boto3
 import logging
 from math import floor
 from ast import literal_eval
@@ -23,7 +23,7 @@ def cleanup_temp(folder='/tmp'):
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
         except Exception as e:
-            print('Failed to delete %s. Reason: %s' % (file_path, e))
+            print('Failed to delete {}. Reason: {}'.format(file_path, e))
             return False
     return True
 
@@ -85,12 +85,15 @@ def tint_frame(image, color, size, local=False):
     return image
     
 
-# TODO: add encryption?? SSECustomerAlgorithm = AES256 ?
+# TODO: add encryption in flight?? SSECustomerAlgorithm = AES256 ?
 # returns converted file
 # def upload_to_new_s3(client, file)
 # TODO: add try catches
 """
-Uploads transformed image to artist's spot on 
+Uploads transformed image to artist's folders on S3
+Calls function recursively if it fails, up to 3 attempts.
+This function uses unironic recursion...someday...I will use dynamic programming
+This one's for you Andrea
 Args:
 <S3Client> client- the boto3 S3 client.
 <Dict> metadata - image metadata with config info.
@@ -99,22 +102,43 @@ Args:
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
-def upload_image(client, metadata, image, size):
-    # first fetch actual object
-    logging.info(size)
-    size = "small" if "225" in size else "medium"
+def upload_image(client, metadata, image, size, tries=0):
+    # input validations:
+    # is there a better way to write this validation...?
+    if not metadata['artist-uuid'] or not metadata['commission-type'] or not metadata['name']:
+        logging.info("Invalid metadata passed into upload_image")
+        return False
+    if size not in {"medium", "small"}: 
+        logging.info("Invalid size passed into upload_image")
+        return False
+    if image is None: 
+        logging.info("Absolutely wack image passed into upload_image")
+        return False
+    if tries > 3:
+        logging.info("Invalid number of tries in this bitch")
+        return False
+
     prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
 
-    img_id = uuid.uuid4()
+    #TODO: this might just become the img name from metadata, pending Kyle opinion
 
-    response = client.put_object(
-        Body=image.getvalue(),
-        Bucket=os.environ["s3_bucket"],
-        Key=prefix + str(img_id) + ".jpeg"
-    )
+    try:
+        response = client.put_object(
+            Body=image.getvalue(),
+            Bucket=os.environ["s3_bucket"],
+            Key=prefix + metadata['name'] + ".jpeg"
+        )
+        logging.info("picture written to {}/{}".format(os.environ["s3_bucket"], prefix))
+        return response
+    except Exception as e:
+        logging.info("Upload to S3 bucket failed with exception {}, retrying...".format(e))
+        if tries < 3: 
+            response = upload_image(client, metadata, image, size, tries+1)
+        elif tries == 3: 
+            logging.info("Upload to S3 bucket failed with exception {}.".format(e))
+            return False
+        return response
 
-    logging.info("picture written to {}/{}".format(os.environ["s3_bucket"], prefix))
-    return response
 
 # TODO: add try catches
 # TODO: add situation where crop fails, create white image with question mark and upload that
