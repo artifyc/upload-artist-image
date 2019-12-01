@@ -216,6 +216,7 @@ def convert_and_resize_test(local=False):
 
     small = "225, 300"
     metadata = {"crop-left": 0, "crop-top": 0, "crop-right": 0, "crop-bottom": 0}
+    metadata_bad = {"crop-left": "42", "crop-top": 0, "crop-right": 0, "crop-bottom": 0}
     if local: os.environ["s3_bucket"] = "artifyc-user-images-qa"
 
     #(client, filename, metadata, size, local=False, testing=False)
@@ -224,7 +225,8 @@ def convert_and_resize_test(local=False):
     else: return False
 
     # Test Case II: invalid metadata is passed to the function
-    if not convert_and_resize_portfolio_image(good_img, None, small, local, True): logging.info("\tTest Case II... Passed") 
+    if not convert_and_resize_portfolio_image(good_img, None, small, local, True): pass
+    if not convert_and_resize_portfolio_image(good_img, metadata_bad, small, local, True): logging.info("\tTest Case II... Passed")
     else: return False
 
     # Test Case III: Invalid sizes passed to the function
@@ -234,8 +236,9 @@ def convert_and_resize_test(local=False):
     # Test Case IV: Passing long and thin images in and ensuring there is whitespace
     try:
         for filename in os.listdir(filepath):
-            image = convert_and_resize_portfolio_image(filename, metadata, small, local, True)
-            image.save(filepath + filename, "PNG")
+            if filename == "not_photo.rtf": pass
+            image = convert_and_resize_portfolio_image(filename, metadata, small, local=local, test=True)
+            image.save(filepath + filename + "_out.png", "PNG", quality=90)
             image.close()
     except Exception as e:
         logging.info("\tTest Case IV... Failed with exception {}".format(e))
@@ -244,8 +247,6 @@ def convert_and_resize_test(local=False):
     # Test Case V: Pass corrupt or bad image
     if not convert_and_resize_portfolio_image("not_photo.rtf", metadata, small, local, True): logging.info("\tTest Case V... Passed") 
     else: return False
-
-
 
 def test_portfolio():
     handler(None, None, test=True, local=True)

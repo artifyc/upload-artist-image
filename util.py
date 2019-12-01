@@ -1,4 +1,4 @@
-import os, shutil, uuid, io, sys, boto3
+import os, shutil, uuid, io, sys, boto3, numbers
 import logging
 from math import floor
 from ast import literal_eval
@@ -51,7 +51,7 @@ def validate_image(imgpath, filename, client=None, test=False):
                     img.close()
                     return True
             except Exception as e:
-                logging.info("Image is invalid with exception: {}".format(e))
+                logging.info("\tImage is invalid with exception: {}".format(e))
                 return False
     else: return False
 
@@ -157,61 +157,60 @@ Returns:
 def convert_and_resize_portfolio_image(filename, metadata, size, client=None, local=False, test=False):
     # input validations:
     # is there a better way to write this validation...?
-    if not metadata['crop-left'] or not metadata['crop-right'] or not metadata['crop-top'] or not metadata['crop-bottom']:
-        logging.info("Invalid metadata {} passed into convert_and_resize".format(metadata))
+    if not metadata:
+        logging.info("\tInvalid metadata {} passed into convert_and_resize".format(metadata))
+        return False
+    if not all([isinstance(x, numbers.Number) for x in (metadata['crop-left'], metadata['crop-right'], metadata['crop-top'], metadata['crop-bottom'])]):
+        logging.info("\tInvalid metadata {} passed into convert_and_resize".format(metadata))
         return False
     if size not in {"415, 615", "225, 300"}: 
-        logging.info("Invalid size {} passed into convert_and_resize".format(size))
+        logging.info("\tInvalid size {} passed into convert_and_resize".format(size))
         return False
     if not filename or filename == "":
-        logging.info("No filename was passed to convert_and_resize")
+        logging.info("\tNo filename was passed to convert_and_resize")
         return False
 
     # if this is being run on the lambda and is not a test:
     if not local and not test: path = "/tmp/" + filename
-
+    
     # if we are running locally and testing, use the testing directory
-    elif local and test: path = "tests/tests/convert_and_resize_portfolio_image/" + filename
-
+    elif local and test: path = "tests/tests/convert_and_resize_test/" + filename
+    
     # if we are running a test from the lambda, use this directory
-    else: path = "tests/convert_and_resize_portfolio_image/" + filename
+    else: path = "tests/convert_and_resize_test/" + filename
 
     if not validate_image(path, filename, client, test):
-        logging.info("Invalid image passed into convert_and_resize")
+        logging.info("\tInvalid image passed into convert_and_resize")
         return False 
 
     try:
         with open(path, 'rb+') as content_file:
-            img = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
+            image = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
 
             # size of the image-to-be as dicatated by the os.environ variable
             tuple_environ_size = literal_eval("({})".format(size))
 
             environ_width, environ_height = size.split(',')
-            width, height = img.size   # Get dimensions
+            width, height = image.size   # Get dimensions
 
-            image = img.crop((int(metadata['crop-left']), int(metadata['crop-top']), int(metadata['crop-right'])+width, int( metadata['crop-bottom'])+height))
-
+            image = image.crop((int(metadata['crop-left']), int(metadata['crop-top']), int(metadata['crop-right'])+width, int( metadata['crop-bottom'])+height))
             # after cropping get a new image the size of the buffer and fill with white
-            whitespace = Image.new('RGBA', tuple_environ_size, (0, 0, 0, 0))
+            whitespace = Image.new('RGBA', tuple_environ_size, (255, 255, 255, 255))
 
             # crop image while maintaining its aspect ratio
-            image.thumbnail(tuple_environ_size, PIL.Image.NEAREST)
+            image.thumbnail(tuple_environ_size, Image.NEAREST)
 
-            centered_width = ((int(environ_width) - width)/2)
-            centered_height = ((int(environ_height) - height)/2)
+            centered_width = floor(((int(environ_width) - width)/2))
+            centered_height = floor(((int(environ_height) - height)/2))
 
             # smush image.thumbnail over whitespace so that any extra space is white
-            image = whitespace.paste(image, (centered_width, centered_height))
-
-            buffer = io.BytesIO()
-            image.save(buffer, 'PNG', quality=90)
+            whitespace.paste(image, (centered_width, centered_height))
             
     except Exception as e:
-        logging.info("convert_and_resize failed with exception {}".format(e))
+        logging.info("\tconvert_and_resize failed with exception {}".format(e))
         return False
 
-    return image
+    return whitespace
         
 # TODO: add try catches
 """
