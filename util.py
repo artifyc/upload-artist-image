@@ -102,40 +102,40 @@ Args:
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
-def upload_image(client, metadata, image, size, tries=0):
+def upload_image(client, metadata, image, size, tries=1):
     # input validations:
     # is there a better way to write this validation...?
-    if not metadata['artist-uuid'] or not metadata['commission-type'] or not metadata['name']:
-        logging.info("Invalid metadata passed into upload_image")
+    if not metadata or not metadata['artist-uuid'] or not metadata['commission-type'] or not metadata['name']:
+        logging.info("\tInvalid metadata passed into upload_image")
         return False
     if size not in {"medium", "small"}: 
-        logging.info("Invalid size passed into upload_image")
+        logging.info("\tInvalid size passed into upload_image")
         return False
     if image is None: 
-        logging.info("Absolutely wack image passed into upload_image")
+        logging.info("\tAbsolutely wack image passed into upload_image")
         return False
     if tries > 3:
-        logging.info("Invalid number of tries in this bitch")
+        logging.info("\tInvalid number of tries in this bitch")
         return False
 
     prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
 
-    #TODO: this might just become the img name from metadata, pending Kyle opinion
-
     try:
+
         response = client.put_object(
             Body=image.getvalue(),
             Bucket=os.environ["s3_bucket"],
             Key=prefix + metadata['name'] + ".jpeg"
         )
-        logging.info("picture written to {}/{}".format(os.environ["s3_bucket"], prefix))
+        logging.info("\tPicture uploaded to {}/{}".format(os.environ["s3_bucket"], prefix))
         return response
     except Exception as e:
-        logging.info("Upload to S3 bucket failed with exception {}, retrying...".format(e))
+        logging.info("\tUpload to S3 bucket failed with exception {}, retrying...".format(e))
         if tries < 3: 
-            response = upload_image(client, metadata, image, size, tries+1)
+            #logging.info("Upload to S3 bucket failed with exception {}. Try number {}".format(e, tries))
+            return upload_image(client, metadata, image, size, tries+1)
         elif tries == 3: 
-            logging.info("Upload to S3 bucket failed with exception {}.".format(e))
+            logging.info("\tUpload to S3 bucket and retries failed with exception {}".format(e))
             return False
         return response
 
@@ -154,48 +154,64 @@ Args:
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
-def convert_and_resize_portfolio_image(client, filename, size, metadata):
+def convert_and_resize_portfolio_image(filename, metadata, size, client=None, local=False, test=False):
+    # input validations:
+    # is there a better way to write this validation...?
+    if not metadata['crop-left'] or not metadata['crop-right'] or not metadata['crop-top'] or not metadata['crop-bottom']:
+        logging.info("Invalid metadata {} passed into convert_and_resize".format(metadata))
+        return False
+    if size not in {"415, 615", "225, 300"}: 
+        logging.info("Invalid size {} passed into convert_and_resize".format(size))
+        return False
+    if not filename or filename == "":
+        logging.info("No filename was passed to convert_and_resize")
+        return False
 
-    path = "/tmp/" + filename
-    with open(path, 'rb+') as content_file:
+    # if this is being run on the lambda and is not a test:
+    if not local and not test: path = "/tmp/" + filename
 
-        # size of the image-to-be as dicatated by the os.environ variable
-        tuple_environ_size = literal_eval("({})".format(size))
+    # if we are running locally and testing, use the testing directory
+    elif local and test: path = "tests/tests/convert_and_resize_portfolio_image/" + filename
 
-        environ_width, environ_height = size.split(',')
-        content = content_file.read()
-        img = Image.open(io.BytesIO(content)).convert('RGBA')
+    # if we are running a test from the lambda, use this directory
+    else: path = "tests/convert_and_resize_portfolio_image/" + filename
 
-        width, height = img.size   # Get dimensions
+    if not validate_image(path, filename, client, test):
+        logging.info("Invalid image passed into convert_and_resize")
+        return False 
 
-        crop_map = {"left": metadata['crop-left'], "top": metadata['crop-top'],\
-         "right": metadata['crop-right'], "bottom": metadata['crop-bottom']}
+    try:
+        with open(path, 'rb+') as content_file:
+            img = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
 
-        # crop the image given the inputs of the user
-        # resize image to be the input size
-        # the size appears as "225, 300", literally eval as a tuple for size
+            # size of the image-to-be as dicatated by the os.environ variable
+            tuple_environ_size = literal_eval("({})".format(size))
 
-        image = img.crop((int(crop_map["left"]), int(crop_map["top"]),\
-         int(crop_map["right"])+width, int(crop_map["bottom"])+height))
+            environ_width, environ_height = size.split(',')
+            width, height = img.size   # Get dimensions
 
-        # after cropping get a new image the size of the buffer and fill with white
-        whitespace = Image.new('RGBA', tuple_environ_size, (0, 0, 0, 0))
+            image = img.crop((int(metadata['crop-left']), int(metadata['crop-top']), int(metadata['crop-right'])+width, int( metadata['crop-bottom'])+height))
 
-        # crop image while maintaining its aspect ratio
-        image.thumbnail(tuple_environ_size, PIL.Image.NEAREST)
+            # after cropping get a new image the size of the buffer and fill with white
+            whitespace = Image.new('RGBA', tuple_environ_size, (0, 0, 0, 0))
 
-        centered_width = ((int(environ_width) - width)/2)
-        centered_height = ((int(environ_height) - height)/2)
+            # crop image while maintaining its aspect ratio
+            image.thumbnail(tuple_environ_size, PIL.Image.NEAREST)
 
-        # smush image.thumbnail over whitespace so that any extra space is white
-        image = whitespace.paste(image, (centered_width, centered_height))
+            centered_width = ((int(environ_width) - width)/2)
+            centered_height = ((int(environ_height) - height)/2)
 
-        buffer = io.BytesIO()
-        format = 'PNG'
+            # smush image.thumbnail over whitespace so that any extra space is white
+            image = whitespace.paste(image, (centered_width, centered_height))
 
-        image.save(buffer, format, quality=90)
+            buffer = io.BytesIO()
+            image.save(buffer, 'PNG', quality=90)
+            
+    except Exception as e:
+        logging.info("convert_and_resize failed with exception {}".format(e))
+        return False
 
-        return image
+    return image
         
 # TODO: add try catches
 """
@@ -230,8 +246,8 @@ def watermark_image_with_text(buffer, filename, metadata, text="Artifyc"):
     draw.text((x, y), text, "#ffffff", font, fill=(255,255,255,128))
 
     image = Image.alpha_composite(buffer, imageWatermark).convert('RGB')
+    image.save(buffer, format='JPEG', quality=90)
 
-    image.save(io.BytesIO(), format='JPEG', quality=90)
     return buffer
 
 # alpha_composite frame over image, create 

@@ -134,61 +134,63 @@ def tint_frame_test(local=False):
 Verifies that the upload_image_test works correctly by uploading a sample img,
 verifying it with a get_obj, then deleting that image from S3. 
 Args:
+<S3Client> client- the boto3 S3 client.
 <bool> local - indicated whether this test is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
-def upload_image_test(local=False):
+def upload_image_test(client, local=False):
 
     logging.info("upload_image Test Entered")
     # create fake image either on lambda or locally
     filepath = "/tmp" if not local else "tests/tests/upload_file_test/"
-    asset_path = "tests/tests/upload_file_test/" if local else "tests/upload_file_test/"
+    path = "tests/tests/upload_file_test/" if local else "tests/upload_file_test/"
 
     metadata = {"artist-uuid": "test", "commission-type": "test-type", "name": "testfile"}
     if local: os.environ["s3_bucket"] = "artifyc-user-images-qa"
-    client = boto3.client('s3')
     
-    with open(asset_path + "IMG_1967.jpeg", 'rb+') as content_file:
-        image = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
+    with open(path + 'IMG_1967.jpg', 'rb+') as content_file:
+        image = Image.open(io.BytesIO(content_file.read())).convert('RGB')
 
         # Test Case I: invalid client is passed to the function
-        if not upload_image(None, metadata, image, "small"): logging.info("\tTest Case I... Passed") 
+        if not upload_image(None, metadata, image, "small"): logging.info("\tTest Case I... Passed\n") 
         else: return False
 
         # Test Case II: invalid metadata is passed to the function
-        if not upload_image(client, None, image, "small"): logging.info("\tTest Case II... Passed") 
+        if not upload_image(client, None, image, "small"): logging.info("\tTest Case II... Passed\n") 
         else: return False
 
         # Test Case III: None image passed to the function
-        if not upload_image(client, metadata, None, "small"): logging.info("\tTest Case III... Passed") 
+        if not upload_image(client, metadata, None, "small"): logging.info("\tTest Case III... Passed\n") 
         else: return False
 
         # Test Case IV: Invalid image passed to the function
-        if not upload_image(client, metadata, "img", "small"): logging.info("\tTest Case IV... Passed") 
+        if not upload_image(client, metadata, "img", "small"): logging.info("\tTest Case IV... Passed\n") 
         else: return False
 
         # Test Case V: Invalid size passed to the function
-        if not upload_image(client, metadata, image, "mega", 4): logging.info("\tTest Case V... Passed") 
+        if not upload_image(client, metadata, image, "mega", 4): logging.info("\tTest Case V... Passed\n") 
         else: return False
 
         # Test Case VI: Invalid tries passed to the function
-        if not upload_image(client, metadata, image, "small", 4): logging.info("\tTest Case VI... Passed") 
+        if not upload_image(client, metadata, image, "small", 4): logging.info("\tTest Case VI... Passed\n") 
         else: return False
 
         # Test Case VII: Actual successful case of photo upload occurs
         # upload a photo, verify the respose is ok, then cleanup the photo from S3 before passing
         try:
-            response = upload_image(client, metadata, image, "small")
-            if not response['Version']: 
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG")
+
+            response = upload_image(client, metadata, buffer, "small")
+            if not response['ResponseMetadata']['HTTPStatusCode'] == 200: 
                 logging.info("\tTest Case VII... Failed with invalid img upload response")
                 return False
 
             prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + "small" + '/'
             response = client.delete_object(
-                Body=image.getvalue(),
                 Bucket=os.environ["s3_bucket"],
-                Key=prefix + metadata["name"]
+                Key=prefix + metadata["name"] + ".jpeg"
             )
             logging.info("\tTest Case VII... Passed")
 
@@ -203,10 +205,72 @@ def upload_image_test(local=False):
     logging.info("photo_upload Test Successful!")
     return True
 
+# include weird sized images
+def convert_and_resize_test(local=False):
+
+    logging.info("convert_and_resize_test Test Entered")
+    # create fake image either on lambda or locally
+    filepath = "tests/tests/convert_and_resize_test/"
+
+    good_img = "IMG_1967.jpg"
+
+    small = "225, 300"
+    metadata = {"crop-left": 0, "crop-top": 0, "crop-right": 0, "crop-bottom": 0}
+    if local: os.environ["s3_bucket"] = "artifyc-user-images-qa"
+
+    #(client, filename, metadata, size, local=False, testing=False)
+    # Test Case I: invalid filename is passed
+    if not convert_and_resize_portfolio_image(None, metadata, small, local, True): logging.info("\tTest Case I... Passed") 
+    else: return False
+
+    # Test Case II: invalid metadata is passed to the function
+    if not convert_and_resize_portfolio_image(good_img, None, small, local, True): logging.info("\tTest Case II... Passed") 
+    else: return False
+
+    # Test Case III: Invalid sizes passed to the function
+    if not convert_and_resize_portfolio_image(good_img, metadata, "Fakesize", local, True): logging.info("\tTest Case III... Passed") 
+    else: return False
+
+    # Test Case IV: Passing long and thin images in and ensuring there is whitespace
+    try:
+        for filename in os.listdir(filepath):
+            image = convert_and_resize_portfolio_image(filename, metadata, small, local, True)
+            image.save(filepath + filename, "PNG")
+            image.close()
+    except Exception as e:
+        logging.info("\tTest Case IV... Failed with exception {}".format(e))
+    logging.info("\tTest Case IV... Passed")
+
+    # Test Case V: Pass corrupt or bad image
+    if not convert_and_resize_portfolio_image("not_photo.rtf", metadata, small, local, True): logging.info("\tTest Case V... Passed") 
+    else: return False
+
+
+
 def test_portfolio():
     handler(None, None, test=True, local=True)
     return True
 
 if __name__ == '__main__':
-    tint_frame_test(True)
-        
+    client = boto3.client('s3')                                     
+    convert_and_resize_test(True)
+
+# DID SOMEBODY MENTION ART(IFYC)? https://www.youtube.com/watch?v=ru-oHqBJkxY      
+"""                                                                    
+               AAA               RRRRRRRRRRRRRRRRR   TTTTTTTTTTTTTTTTTTTTTTT
+              A:::A              R::::::::::::::::R  T:::::::::::::::::::::T
+             A:::::A             R::::::RRRRRR:::::R T:::::::::::::::::::::T
+            A:::::::A            RR:::::R     R:::::RT:::::TT:::::::TT:::::T
+           A:::::::::A             R::::R     R:::::RTTTTTT  T:::::T  TTTTTT
+          A:::::A:::::A            R::::R     R:::::R        T:::::T        
+         A:::::A A:::::A           R::::RRRRRR:::::R         T:::::T        
+        A:::::A   A:::::A          R:::::::::::::RR          T:::::T        
+       A:::::A     A:::::A         R::::RRRRRR:::::R         T:::::T        
+      A:::::AAAAAAAAA:::::A        R::::R     R:::::R        T:::::T        
+     A:::::::::::::::::::::A       R::::R     R:::::R        T:::::T        
+    A:::::AAAAAAAAAAAAA:::::A      R::::R     R:::::R        T:::::T        
+   A:::::A             A:::::A   RR:::::R     R:::::R      TT:::::::TT      
+  A:::::A               A:::::A  R::::::R     R:::::R      T:::::::::T      
+ A:::::A                 A:::::A R::::::R     R:::::R      T:::::::::T      
+AAAAAAA                   AAAAAAARRRRRRRR     RRRRRRR      TTTTTTTTTTT      
+"""
