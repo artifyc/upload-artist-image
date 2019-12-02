@@ -210,43 +210,97 @@ def convert_and_resize_test(local=False):
 
     logging.info("convert_and_resize_test Test Entered")
     # create fake image either on lambda or locally
-    filepath = "tests/tests/convert_and_resize_test/"
+    filepath = "tests/tests/convert_and_resize_test/" if local else "tests/convert_and_resize_test/"
 
     good_img = "IMG_1967.jpg"
 
     small = "225, 300"
+    medium = "415, 615"
     metadata = {"crop-left": 0, "crop-top": 0, "crop-right": 0, "crop-bottom": 0}
     metadata_bad = {"crop-left": "42", "crop-top": 0, "crop-right": 0, "crop-bottom": 0}
     if local: os.environ["s3_bucket"] = "artifyc-user-images-qa"
 
     #(client, filename, metadata, size, local=False, testing=False)
     # Test Case I: invalid filename is passed
-    if not convert_and_resize_portfolio_image(None, metadata, small, local, True): logging.info("\tTest Case I... Passed") 
+    if not convert_and_resize_portfolio_image(None, metadata, small, local, True): 
+        logging.info("\tTest Case I... Passed") 
     else: return False
 
     # Test Case II: invalid metadata is passed to the function
     if not convert_and_resize_portfolio_image(good_img, None, small, local, True): pass
-    if not convert_and_resize_portfolio_image(good_img, metadata_bad, small, local, True): logging.info("\tTest Case II... Passed")
+    if not convert_and_resize_portfolio_image(good_img, metadata_bad, small, local, True): 
+        logging.info("\tTest Case II... Passed")
     else: return False
 
     # Test Case III: Invalid sizes passed to the function
-    if not convert_and_resize_portfolio_image(good_img, metadata, "Fakesize", local, True): logging.info("\tTest Case III... Passed") 
+    if not convert_and_resize_portfolio_image(good_img, metadata, "Fakesize", local, True): 
+        logging.info("\tTest Case III... Passed") 
     else: return False
 
-    # Test Case IV: Passing long and thin images in and ensuring there is whitespace
+    # Test Case IV: Passing long and thin images in and ensuring there is whitespace for med and small images
     try:
         for filename in os.listdir(filepath):
-            if filename == "not_photo.rtf": pass
+            if filename in {'out', 'not_photo.rtf'}: continue
             image = convert_and_resize_portfolio_image(filename, metadata, small, local=local, test=True)
-            image.save(filepath + filename + "_out.png", "PNG", quality=90)
+            image.save(filepath + "out/" + filename, "PNG", quality=90)
+            image = convert_and_resize_portfolio_image(filename, metadata, medium, local=local, test=True)
+            image.save(filepath + "out/medium_" + filename, "PNG", quality=90)
             image.close()
     except Exception as e:
         logging.info("\tTest Case IV... Failed with exception {}".format(e))
+        return False
     logging.info("\tTest Case IV... Passed")
 
     # Test Case V: Pass corrupt or bad image
-    if not convert_and_resize_portfolio_image("not_photo.rtf", metadata, small, local, True): logging.info("\tTest Case V... Passed") 
+    if not convert_and_resize_portfolio_image("not_photo.rtf", metadata, small, local, True):
+         logging.info("\tTest Case V... Passed") 
     else: return False
+
+"""
+Verifies that the watermark_image_test works correctly by testing different permutations of sizes,
+watermark areas, etc. 
+Args:
+<bool> local - indicated whether this test is being run locally or on a lambda.
+Returns:
+<bool> - True if test was successful, False if test failed.
+"""
+# include weird sized images
+def watermark_image_test(local=False):
+
+    # watermark_image_with_text(buffer, filename, metadata, text="Artifyc")
+    logging.info("watermark_image_test Test Entered")
+    filepath = "tests/tests/watermark_image_test/" if local else "tests/watermark_image_test/"
+    filename = "uMRP5D9.jpg"
+    metadata = {'watermark-location': ''}
+    sizes = ['bottom', 'middle', 'top']
+
+    status, exception = watermark_image_with_text(None, metadata, local=local)
+    if type(exception).__name__ == AttributeError: logging.info("\tTest Case I... Passed") 
+    
+    with open(filepath + filename, 'rb+') as content_file:
+        original_img = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
+
+        status, exception = watermark_image_with_text(original_img, None, local=local)
+        if type(exception).__name__ == TypeError: logging.info("\tTest Case II... Passed") 
+
+        status, exception = watermark_image_with_text(original_img, metadata, local=local)
+        if type(exception).__name__ == TypeError: logging.info("\tTest Case III... Passed") 
+
+        for size in sizes:
+            try: 
+                metadata['watermark-location'] = size
+                image = watermark_image_with_text(original_img, metadata, local=local)
+                image.save((filepath + "out/{}_".format(size) + filename), "JPEG", quality=90)
+                image.close()
+                logging.info("\tTest Case IV... Passed") 
+            except Exception as e:
+                logging.info("Exception {}: {}".format(size, type(exception).__name__))
+                return False
+                
+        return True
+
+
+    
 
 def test_portfolio():
     handler(None, None, test=True, local=True)
@@ -254,7 +308,7 @@ def test_portfolio():
 
 if __name__ == '__main__':
     client = boto3.client('s3')                                     
-    convert_and_resize_test(True)
+    watermark_image_test(True)
 
 # DID SOMEBODY MENTION ART(IFYC)? https://www.youtube.com/watch?v=ru-oHqBJkxY      
 """                                                                    
@@ -274,4 +328,4 @@ if __name__ == '__main__':
   A:::::A               A:::::A  R::::::R     R:::::R      T:::::::::T      
  A:::::A                 A:::::A R::::::R     R:::::R      T:::::::::T      
 AAAAAAA                   AAAAAAARRRRRRRR     RRRRRRR      TTTTTTTTTTT      
-"""
+                                                                            """

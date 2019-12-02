@@ -163,9 +163,6 @@ def convert_and_resize_portfolio_image(filename, metadata, size, client=None, lo
     if not all([isinstance(x, numbers.Number) for x in (metadata['crop-left'], metadata['crop-right'], metadata['crop-top'], metadata['crop-bottom'])]):
         logging.info("\tInvalid metadata {} passed into convert_and_resize".format(metadata))
         return False
-    if size not in {"415, 615", "225, 300"}: 
-        logging.info("\tInvalid size {} passed into convert_and_resize".format(size))
-        return False
     if not filename or filename == "":
         logging.info("\tNo filename was passed to convert_and_resize")
         return False
@@ -193,12 +190,14 @@ def convert_and_resize_portfolio_image(filename, metadata, size, client=None, lo
             environ_width, environ_height = size.split(',')
             width, height = image.size   # Get dimensions
 
-            image = image.crop((int(metadata['crop-left']), int(metadata['crop-top']), int(metadata['crop-right'])+width, int( metadata['crop-bottom'])+height))
+            if not all([(x == 0 for x in (metadata['crop-left'], metadata['crop-right'], metadata['crop-top'], metadata['crop-bottom']))]):
+                image = image.crop((int(metadata['crop-left']), int(metadata['crop-top']), int(metadata['crop-right'])+width, int( metadata['crop-bottom'])+height))
             # after cropping get a new image the size of the buffer and fill with white
             whitespace = Image.new('RGBA', tuple_environ_size, (255, 255, 255, 255))
 
             # crop image while maintaining its aspect ratio
             image.thumbnail(tuple_environ_size, Image.NEAREST)
+            width, height = image.size   # Get dimensions
 
             centered_width = floor(((int(environ_width) - width)/2))
             centered_height = floor(((int(environ_height) - height)/2))
@@ -223,31 +222,36 @@ Args:
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
-def watermark_image_with_text(buffer, filename, metadata, text="Artifyc"):
+def watermark_image_with_text(image, metadata, text="Artifyc", local=False):
+    try: 
+        imageWatermark = Image.new('RGBA', image.size, (255, 255, 255, 0))
 
-    imageWatermark = Image.new('RGBA', buffer.size, (255, 255, 255, 0))
+        draw = ImageDraw.Draw(imageWatermark)
 
-    draw = ImageDraw.Draw(imageWatermark)
-    path = os.environ['font_path'] + 'Raleway-Bold.ttf'
-    
-    width, height = buffer.size
-    small_map = {'bottom': 5, 'middle': 2, 'top': 1.10}
+        path = os.environ['font_path'] + 'Raleway-Bold.ttf' if not local else "fonts/fonts/Raleway-Bold.ttf"
+        
+        width, height = image.size
+        small_map = {'top': 10, 'middle': 2, 'bottom': 1.10}
 
-    height_margin = small_map[metadata['watermark-location']]
+        height_margin = small_map[metadata['watermark-location']]
 
-    font = ImageFont.truetype(font=path, size=36, index=0)
-    textWidth, textHeight = draw.textsize(text, font)
+        font = ImageFont.truetype(font=path, size=64, index=0)
+        textWidth, textHeight = draw.textsize(text, font)
 
-    x = (width - textWidth)/2
-    y = (height - textHeight)/height_margin
+        x = (width - textWidth)/2
+        y = (height - textHeight)/height_margin
 
-    # add opacity to text with 128 = 50% opacity
-    draw.text((x, y), text, "#ffffff", font, fill=(255,255,255,128))
+        # add opacity to text with 128 = 50% opacity
+        draw.text((x, y), text, font=font, fill=(255,255,255,128))
 
-    image = Image.alpha_composite(buffer, imageWatermark).convert('RGB')
-    image.save(buffer, format='JPEG', quality=90)
+        image = Image.alpha_composite(image, imageWatermark).convert('RGB')
 
-    return buffer
+    except Exception as e:
+
+        logging.info("watermark_image_with_text failed with error {}".format(e))
+        return False, e
+
+    return image
 
 # alpha_composite frame over image, create 
 # small frame thickness: 7 px left
@@ -269,7 +273,7 @@ Args:
 Returns:
 <bytesIO> buffer - returns the image content with a frame.
 """
-def place_frame_over_image(buffer, size, client, color=None):
+def place_frame_over_image(image, size, client, color=None):
     # determine whether to use med or small frame
     filename = "framemed.png" if "med" in size else "framesmall.png"
     path = "assets/frames/" + filename
@@ -281,7 +285,7 @@ def place_frame_over_image(buffer, size, client, color=None):
 
         if color is not None: frame = tint_frame(frame, color, size)
 
-        framed_image = Image.alpha_composite(buffer, frame).convert('RGB')
+        framed_image = Image.alpha_composite(image, frame).convert('RGB')
 
         framed_image.save(io.BytesIO(), 'JPEG', quality=90)
 
