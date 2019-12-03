@@ -1,4 +1,5 @@
-import os, shutil, uuid, io, sys, boto3, numbers
+import os, shutil, uuid, io, sys, numbers
+if os.environ.get("s3_bucket") is not None: import boto3
 import logging
 from math import floor
 from ast import literal_eval
@@ -29,20 +30,32 @@ def cleanup_temp(folder='/tmp'):
 
 
 """
-Validate that the image passed is valid by downloading it from S3 and opening it
-with Pillow
+Validates image in one of two ways:
+1. Validates that the image passed is valid by downloading it from S3 and opening it with Pillow
+2. If an Image object is sent to the function, merely verify that image and return True or False
 Args:
-<S3Client> client- the boto3 S3 client.
-<str> filename - the name of the file being uploaded.
 <str> imgpath - location of file on S3.
+<str> filename - the name of the file being uploaded.
+<Image> image - optional Image object to verify.
+<S3Client> client- the boto3 S3 client.
+<bool> local - boolean indicating whether this function is called local or not
+
 Returns:
 <bool> - returns whether the image returned was valid.
 """
-def validate_image(imgpath, filename, client=None, test=False):
+def validate_image(imgpath=None, filename=None, image=None, client=None, local=False):
     # this check necessary because may be passed foldernames
+    if image:
+        try:
+            image.verify()
+            return True
+        except Exception as e:
+            logging.info("\tImage is invalid with exception: {}".format(e))
+            return False
+
     if imgpath.endswith(('.png', '.jpg', '.tiff', '.jpeg')):
             # fetch actual photo and download it to the lambda
-            if not test: 
+            if not local: 
                 client.download_file(os.environ["s3_bucket"], imgpath, "/tmp/" + filename)
             try:
                 with open(imgpath, 'rb+') as content_file:
@@ -91,9 +104,6 @@ def tint_frame(image, color, size, local=False):
 # TODO: add try catches
 """
 Uploads transformed image to artist's folders on S3
-Calls function recursively if it fails, up to 3 attempts.
-This function uses unironic recursion...someday...I will use dynamic programming
-This one's for you Andrea
 Args:
 <S3Client> client- the boto3 S3 client.
 <Dict> metadata - image metadata with config info.
@@ -104,23 +114,24 @@ Returns:
 """
 def upload_image(client, metadata, image, size, tries=1):
     # input validations:
-    # is there a better way to write this validation...?
-    if not metadata or not metadata['artist-uuid'] or not metadata['commission-type'] or not metadata['name']:
-        logging.info("\tInvalid metadata passed into upload_image")
-        return False
-    if size not in {"medium", "small"}: 
-        logging.info("\tInvalid size passed into upload_image")
-        return False
-    if image is None: 
-        logging.info("\tAbsolutely wack image passed into upload_image")
-        return False
-    if tries > 3:
-        logging.info("\tInvalid number of tries in this bitch")
-        return False
-
-    prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
-
     try:
+        if not metadata or not metadata['artist-uuid'] or not metadata['commission-type'] or not metadata['name']:
+            logging.info("\tInvalid metadata passed into upload_image")
+            raise ValueError
+
+        if size not in {"medium", "small"}: 
+            logging.info("\tInvalid size passed into upload_image")
+            raise ValueError
+
+        if image is None: 
+            logging.info("\tAbsolutely wack image passed into upload_image")
+            raise ValueError
+
+        if tries > 3:
+            logging.info("\tInvalid number of tries in this bitch")
+            raise RuntimeError
+
+        prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
 
         response = client.put_object(
             Body=image.getvalue(),
@@ -129,14 +140,15 @@ def upload_image(client, metadata, image, size, tries=1):
         )
         logging.info("\tPicture uploaded to {}/{}".format(os.environ["s3_bucket"], prefix))
         return response
+        
     except Exception as e:
-        logging.info("\tUpload to S3 bucket failed with exception {}, retrying...".format(e))
+        #logging.info("\tUpload to S3 bucket failed with exception {}, retrying...".format(e))
         if tries < 3: 
             #logging.info("Upload to S3 bucket failed with exception {}. Try number {}".format(e, tries))
             return upload_image(client, metadata, image, size, tries+1)
-        elif tries == 3: 
-            logging.info("\tUpload to S3 bucket and retries failed with exception {}".format(e))
-            return False
+        elif tries >= 3: 
+            logging.info("\tUpload to S3 bucket and 3 retries failed with exception {}".format(e))
+            return False, e
         return response
 
 
@@ -156,34 +168,27 @@ Returns:
 """
 def convert_and_resize_portfolio_image(filename, metadata, size, client=None, local=False, test=False):
     # input validations:
-    # is there a better way to write this validation...?
-    if not metadata:
-        logging.info("\tInvalid metadata {} passed into convert_and_resize".format(metadata))
-        return False
-    if not all([isinstance(x, numbers.Number) for x in (metadata['crop-left'], metadata['crop-right'], metadata['crop-top'], metadata['crop-bottom'])]):
-        logging.info("\tInvalid metadata {} passed into convert_and_resize".format(metadata))
-        return False
-    if not filename or filename == "":
-        logging.info("\tNo filename was passed to convert_and_resize")
-        return False
-
-    # if this is being run on the lambda and is not a test:
-    if not local and not test: path = "/tmp/" + filename
-    
-    # if we are running locally and testing, use the testing directory
-    elif local and test: path = "tests/tests/convert_and_resize_test/" + filename
-    
-    # if we are running a test from the lambda, use this directory
-    else: path = "tests/convert_and_resize_test/" + filename
-
-    if not validate_image(path, filename, client, test):
-        logging.info("\tInvalid image passed into convert_and_resize")
-        return False 
-
+    # verify that all metadata crop coordinates are integers
     try:
+        if not all([isinstance(x, numbers.Number) for x in (metadata['crop-left'], metadata['crop-right'], metadata['crop-top'], metadata['crop-bottom'])]):
+            logging.info("\tInvalid metadata {} passed into convert_and_resize".format(metadata))
+            raise TypeError
+
+        # if this is being run on the lambda and is not a test:
+        if not local and not test: path = "/tmp/" + filename
+        # if we are running locally and testing, use the testing directory
+        elif not local and test: path = "tests/convert_and_resize_test/" + filename
+        # if we are running a test from the lambda, use this directory
+        else: path = "tests/tests/convert_and_resize_test/" + filename
+
+        # validate_image(imgpath=None, filename=None, image=None, client=None, local=False)
+        if not validate_image(imgpath=path, filename=filename, client=client, local=local):
+            logging.info("\tInvalid image passed into convert_and_resize")
+            raise TypeError
+
         with open(path, 'rb+') as content_file:
             image = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
-
+ 
             # size of the image-to-be as dicatated by the os.environ variable
             tuple_environ_size = literal_eval("({})".format(size))
 
@@ -204,10 +209,10 @@ def convert_and_resize_portfolio_image(filename, metadata, size, client=None, lo
 
             # smush image.thumbnail over whitespace so that any extra space is white
             whitespace.paste(image, (centered_width, centered_height))
-            
+                
     except Exception as e:
         logging.info("\tconvert_and_resize failed with exception {}".format(e))
-        return False
+        return False, e
 
     return whitespace
         
@@ -244,11 +249,12 @@ def watermark_image_with_text(image, metadata, text="Artifyc", local=False):
         # add opacity to text with 128 = 50% opacity
         draw.text((x, y), text, font=font, fill=(255,255,255,128))
 
-        image = Image.alpha_composite(image, imageWatermark).convert('RGB')
+        # returns image formatted as RBGA (aka PNG)
+        image = Image.alpha_composite(image, imageWatermark)
 
     except Exception as e:
 
-        logging.info("watermark_image_with_text failed with error {}".format(e))
+        logging.info("\twatermark_image_with_text failed with error {}".format(e))
         return False, e
 
     return image
@@ -273,20 +279,25 @@ Args:
 Returns:
 <bytesIO> buffer - returns the image content with a frame.
 """
-def place_frame_over_image(image, size, client, color=None):
+def place_frame_over_image(image, size, color=None, local=False):
     # determine whether to use med or small frame
-    filename = "framemed.png" if "med" in size else "framesmall.png"
-    path = "assets/frames/" + filename
+    try:
+        filename = "framemed.png" if "med" in size else "framesmall.png"
+        path = "assets/frames/greyscale/" + filename if not local else "assets/assets/frames/greyscale/"
 
-    #TODO: figure out how to tint the frame color based on passed color
-    with open(path, 'rb+') as content_file:
-        content = content_file.read()
-        frame = Image.open(io.BytesIO(content)).convert('RGBA')
+        # TODO: figure out how to tint the frame color based on passed color
+        # I DID IT BITCH
+        with open(path + filename, 'rb+') as content_file:
+            content = content_file.read()
+            frame = Image.open(io.BytesIO(content)).convert('RGBA')
 
-        if color is not None: frame = tint_frame(frame, color, size)
+            if color is not None: frame = tint_frame(frame, color, size)
+            framed_image = Image.alpha_composite(image, frame).convert('RGB')
 
-        framed_image = Image.alpha_composite(image, frame).convert('RGB')
+            buffer = io.BytesIO()
+            framed_image.save(buffer, 'JPEG', quality=90)
+            return buffer
 
-        framed_image.save(io.BytesIO(), 'JPEG', quality=90)
-
-        return framed_image
+    except Exception as e:
+        logging.info("place_frame_over_image failed with exception: {} - {}".format(type(e).__name__, e))
+        return False, e
