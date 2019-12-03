@@ -45,38 +45,30 @@ Args:
 Returns:
 None ???
 """
-def handle_portfolio(client, key, filename, metadata):
+def handle_portfolio(client, key, filename, metadata, local=False, test=False):
 
     logging.info("Entered portfolio method...")
-    
     # only watermark if it's medium, smaller images do not need to be watermarked
     for size in [s for s in os.environ if "width" in s]:
 
         # convert and crop all images
-        image_buffer = convert_and_resize_portfolio_image(client, filename, os.environ[size], metadata)
+        image_buffer = convert_and_resize_portfolio_image(client, filename, os.environ[size], metadata, local=local, test=test)
 
         # watermark logic
-        if "med" in size and metadata['watermark'] is True: image_buffer = watermark_image_with_text(image_buffer, filename, metadata)
+        if "med" in size and metadata['watermark'] is True: image_buffer = watermark_image_with_text(image_buffer, filename, metadata, local=local)
 
         # framing logic
-        if "frame-color" in metadata and metadata["frame"]:
-            image_buffer = place_frame_over_image(image_buffer, size, client, metadata["frame-color"])  
-
-        elif metadata["frame"]:
-            image_buffer = place_frame_over_image(image_buffer, size, client)
-
-        else:
-            pass
+        if "frame-color" in metadata and metadata["frame"]: image_buffer = place_frame_over_image(image_buffer, size, client, metadata["frame-color"], local=local)  
+        elif metadata["frame"]: image_buffer = place_frame_over_image(image_buffer, size, client)
+        else: pass
 
         response = upload_image(client, metadata, image_buffer, size)
-
         logging.info(response)
 
     # delete buffered files from /S3
     # note, can remove this directory or will the lambda freak out?
     # may have to remove files individually
-    cleanup_temp()
-
+    if not local: cleanup_temp()
     response = client.delete_object(os.environ["s3_bucket"], key)
 
     return
