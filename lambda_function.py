@@ -58,11 +58,11 @@ def handle_portfolio(client, key, filename, metadata, local=False, test=False):
         if "med" in size and metadata['watermark'] is True: image_buffer = watermark_image_with_text(image_buffer, filename, metadata, local=local)
 
         # framing logic
-        if "frame-color" in metadata and metadata["frame"]: image_buffer = place_frame_over_image(image_buffer, size, client, metadata["frame-color"], local=local)  
-        elif metadata["frame"]: image_buffer = place_frame_over_image(image_buffer, size, client)
+        if "frame-color" in metadata and metadata["frame"]: image = place_frame_over_image(image_buffer, size, metadata["frame-color"], local)  
+        elif metadata["frame"]: image = place_frame_over_image(image_buffer, size, client)
         else: pass
 
-        response = upload_image(client, metadata, image_buffer, size)
+        response = upload_image(client, metadata, image, size)
         logging.info(response)
 
     # delete buffered files from /S3

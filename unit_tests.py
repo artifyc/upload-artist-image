@@ -1,5 +1,6 @@
 #from lambda_function import lambda_handler as handler
-import logging, statistics, math, boto3
+import logging, statistics, math
+#boto3
 from pathlib import Path
 from util import *
 from PIL import Image, ImageDraw, ImageFont 
@@ -13,7 +14,7 @@ Test fails if:
     - the directory was deleted by the cleanup_temp
     - there were more than 0 files in the tmp directory after cleanup
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -48,7 +49,7 @@ def cleanup_temp_test(local=False):
 """
 Tests whether the filetype test is working
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -65,7 +66,7 @@ Tints the frames 3 colors and ensures they are within acceptable color bounds.
 If frame tinting fails, should return the gold frame.
 TODO: THIS TEST WILL NEED TO BE REWRITTEN TO SUPPORT DIFFERENT FRAME TYPES
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -121,7 +122,7 @@ Verifies that the upload_image_test works correctly by uploading a sample img,
 verifying it with a get_obj, then deleting that image from S3. 
 Args:
 <S3Client> client- the boto3 S3 client.
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -257,7 +258,7 @@ def convert_and_resize_test(local=False):
 Verifies that the watermark_image_test works correctly by testing different permutations of sizes,
 watermark areas, etc. 
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -301,25 +302,63 @@ def watermark_image_test(local=False):
 """
 Verifies that the function places the frame over the edges of the image, in its correct color.
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test suite failed.
 """
-def test_place_frame_over_image(local=False):
+def place_frame_over_image_test(local=False):
+
+    logging.info("place_frame_over_image_test Test Entered")
 
     # place_frame_over_image(image, size, color=None, local=False)
     # Test Case I: attempt with None image
-    size = "width_small"
-    color = "ffffff"
+    size = "width_med"
+    colors = ["#ffffff",'#34FAFA']
+    path = "tests/tests/place_frame_over_image_test/"
+    filename = 'uMRP5D9_resize.jpg'
 
+    # test case I, passing invalid image
     status, exception = place_frame_over_image(None, size, color=None, local=local)
-    if type(exception).__name__ == "ValueError": logging.info("\tTest Case I... Passed") 
-    return False
+    if type(exception).__name__ == "AttributeError": logging.info("\tTest Case I... Passed") 
+    else: return False
 
-    
-    status, exception = place_frame_over_image(None, size, color=None, local=local)
-    if type(exception).__name__ == "ValueError": logging.info("\tTest Case I... Passed") 
-    return False
+    #try:
+    with open(path + filename, 'rb+') as content_file:
+        original_image = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
+
+        # test case II, passing correct image and invalid size
+        status, exception = place_frame_over_image(original_image, None, color=None, local=local)
+        if type(exception).__name__ == "TypeError": logging.info("\tTest Case II... Passed") 
+        else: return False
+
+        # test case III, passing correct image, size, no color, should succeed
+        framed_image = place_frame_over_image(original_image, size, color=None, local=local)
+        if type(framed_image) == tuple: 
+            logging.info("\tTest Case III... Failed") 
+            return False
+        else: 
+            framed_image = framed_image.convert("RGB")
+            framed_image.save(path + "out/{}_".format(size) + filename, "JPEG", quality=90)
+        logging.info("\tTest Cases III... Passed")
+
+        # for test cases IV & V, passing correct img, size, and now color
+        for color in colors:
+            new_image = place_frame_over_image(original_image, size, color, local=local)
+            if type(new_image) == tuple:
+                logging.info("\tTest Cases IV & V... Failed") 
+                return False
+            else: 
+                new_image = new_image.convert("RGB")
+                new_image.save(path + "out/{}_".format(color.lstrip('#')) + filename, "JPEG", quality=90)
+        logging.info("\tTest Cases IV & V... Passed")
+
+    content_file.close()
+    logging.info("convert_and_resize_test All Tests Passed Successfully!")
+    return True
+
+    #except Exception as e:
+    #    logging.info("place_frame_over_image failed with exception: {}".format(e))
+    #    return False
 
 def test_portfolio():
     handler(None, None, local=True, test=True)
@@ -331,7 +370,8 @@ if __name__ == '__main__':
     #cleanup_temp_test(True)                      
     #upload_image_test(client, True)
     #convert_and_resize_test(True)
-    watermark_image_test(True)
+    #watermark_image_test(True)
+    place_frame_over_image_test(True)
 
 
 # DID SOMEBODY MENTION ART(IFYC)? https://www.youtube.com/watch?v=ru-oHqBJkxY      
