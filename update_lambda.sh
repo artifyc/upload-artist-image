@@ -1,7 +1,11 @@
 cd PIL
-zip -r9 /Users/kreloff/upload-artist-image/function.zip . 
-cd /Users/kreloff/upload-artist-image/
-zip -g function.zip lambda_function.py raleway .
+zip -r9 ../function.zip *
+cd ../fonts
+zip -r9 ../function.zip *
+cd ../numpy
+zip -r9 ../function.zip *
+cd ../
+zip -g function.zip lambda_function.py util.py transforms.py
 echo "Publishing lambda version..."
 aws lambda publish-version --function-name upload-artist-image 
 echo "Updating function code..."
