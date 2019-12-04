@@ -150,7 +150,7 @@ def upload_image(client, metadata, image, size, tries=1, local=False):
         prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
 
         if local:
-            image.save("tests/tests/upload_image_test/{}.jpeg".format(metadata['name']), "JPEG") 
+            image.save("tests/tests/upload_image_test/out/{}.jpeg".format(metadata['name']), "JPEG") 
             return True
         else:
             response = client.put_object(

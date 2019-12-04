@@ -99,7 +99,7 @@ def tint_frame_test(local=False):
                 most_common_color = sorted(colors, key=lambda x: x[0], reverse=True)[0]
                 if local: 
                     img.save("tests/tests/tint_frame_test/{}.png".format(color), "PNG")
-                    cleanup_temp("tests/tests/tint_frame_test")
+                    #cleanup_temp("tests/tests/tint_frame_test")
     except Exception as e:
         logging.info("\tTest Case II... Failed\nException: {}".format(e))
     logging.info("\tTest Case II...  Passed")
@@ -414,12 +414,12 @@ def handle_portfolio_test(client, local=False, test=True):
     logging.info("handle_portfolio_test Test Entered")
 
     keys = [None, 
-    "upload-buffer/temp-bucket-299211192/kaz.png",
+    "upload-buffer/temp-bucket-299211192/bebop.jpeg",
     "upload-buffer/no-artist-id/fake-image.jpg",
     "fake-buffer/temp-bucket-299211192/fake-image.jpg"
     ]
 
-    filename = [None, "kaz.png", "fake-image.jpg", "fake-image.jpg"]
+    filename = [None, "bebop.png", "fake-image.jpg", "fake-image.jpg"]
 
     correct_metadata = {
     'price': '$$', 'crop-right': '0', 'crop-top': '0',
@@ -427,8 +427,8 @@ def handle_portfolio_test(client, local=False, test=True):
     'watermark': 'True', 'artist-uuid': '299211192',
     'frame-color': '#a7cade', 'artist-username': 'archangelo', 
     'crop-bottom': '0', 'mode': 'portfolio', 
-    'commission-type': 'bust', 'watermark-location': 'bottom', 
-    'crop-left': '0', 'frame': 'True', 'name': 'kaz'
+    'commission-type': 'bust', 'watermark-location': 'middle', 
+    'crop-left': '0', 'frame': 'True', 'name': 'spike'
     }
 
     # test case I: give invalid client
@@ -467,6 +467,7 @@ if __name__ == '__main__':
     #convert_and_resize_test(True)
     #watermark_image_test(True)
     #place_frame_over_image_test(True)
+    #tint_frame_test(True)
     handle_portfolio_test(client, True, True)
 
 
