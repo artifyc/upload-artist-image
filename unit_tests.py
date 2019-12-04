@@ -1,5 +1,5 @@
-#from lambda_function import lambda_handler as handler
-import logging, statistics, math
+from lambda_function import handle_portfolio, handle_delivery, handle_profile
+import logging, statistics, math, boto3
 #boto3
 from pathlib import Path
 from util import *
@@ -130,8 +130,8 @@ def upload_image_test(client, local=False):
 
     logging.info("upload_image Test Entered")
     # create fake image either on lambda or locally
-    filepath = "/tmp" if not local else "tests/tests/upload_file_test/"
-    path = "tests/tests/upload_file_test/" if local else "tests/upload_file_test/"
+    filepath = "/tmp" if not local else "tests/tests/upload_image_test/"
+    path = "tests/tests/upload_image_test/" if local else "tests/upload_image_test/"
 
     metadata = {"artist-uuid": "test", "commission-type": "test-type", "name": "testfile"}
     if local: os.environ["s3_bucket"] = "artifyc-user-images-qa"
@@ -360,18 +360,114 @@ def place_frame_over_image_test(local=False):
     #    logging.info("place_frame_over_image failed with exception: {}".format(e))
     #    return False
 
-def test_portfolio():
-    handler(None, None, local=True, test=True)
+"""
+{
+  "ResponseMetadata": {
+    "RequestId": "9F112A3FC0DF4BF0",
+    "HostId": "c8oYc6QCgtTSChKmz/EqR3cSjARDUx7rPx3TsdjHErDHz/xljlLOsxssjgNYWV2216T9lIuMhEA=",
+    "HTTPStatusCode": 200,
+    "HTTPHeaders": {
+      "x-amz-id-2": "c8oYc6QCgtTSChKmz/EqR3cSjARDUx7rPx3TsdjHErDHz/xljlLOsxssjgNYWV2216T9lIuMhEA=",
+      "x-amz-request-id": "9F112A3FC0DF4BF0",
+      "date": "Wed, 13 Nov 2019 02:07:16 GMT",
+      "x-amz-bucket-region": "us-east-1",
+      "content-type": "application/xml",
+      "transfer-encoding": "chunked",
+      "server": "AmazonS3"
+    },
+    "RetryAttempts": 0
+  },
+  "IsTruncated": "False",
+  "Contents": [
+    {
+      "Key": "upload-buffer/temp-bucket-299211192/",
+      "LastModified": "datetime.datetime(2019, 10, 29, 23, 34, 29, tzinfo=tzlocal())",
+      "ETag": "d41d8cd98f00b204e9800998ecf8427e",
+      "Size": 0,
+      "StorageClass": "STANDARD"
+    },
+    {
+      "Key": "upload-buffer/temp-bucket-299211192/bd67f374-10eb-4791-b38f-0b590be62542.jpeg",
+      "LastModified": "datetime.datetime(2019, 11, 11, 16, 44, 33, tzinfo=tzlocal())",
+      "ETag": "503e1ca476190962b905b4074fd53cfd",
+      "Size": 17175,
+      "StorageClass": "STANDARD"
+    },
+    {
+      "Key": "upload-buffer/temp-bucket-299211192/kaz.png",
+      "LastModified": "datetime.datetime(2019, 11, 13, 2, 7, 14, tzinfo=tzlocal())",
+      "ETag": "ee72b223ba8463ba5e1b42ca1662ab8f",
+      "Size": 102883,
+      "StorageClass": "STANDARD"
+    }
+  ],
+  "Name": "artifyc-user-images-qa",
+  "Prefix": "upload-buffer/temp-bucket-299211192/",
+  "Delimiter": "/",
+  "MaxKeys": 1000,
+  "EncodingType": "url",
+  "KeyCount": 3
+}
+"""
+# def handle_portfolio(client, key, filename, metadata, local=False, test=False)
+def handle_portfolio_test(client, local=False, test=True):
+    logging.info("handle_portfolio_test Test Entered")
+
+    keys = [None, 
+    "upload-buffer/temp-bucket-299211192/kaz.png",
+    "upload-buffer/no-artist-id/fake-image.jpg",
+    "fake-buffer/temp-bucket-299211192/fake-image.jpg"
+    ]
+
+    filename = [None, "kaz.png", "fake-image.jpg", "fake-image.jpg"]
+
+    correct_metadata = {
+    'price': '$$', 'crop-right': '0', 'crop-top': '0',
+    'tags': "['neo yokio', 'kaz', 'pastel']",
+    'watermark': 'True', 'artist-uuid': '299211192',
+    'frame-color': '#a7cade', 'artist-username': 'archangelo', 
+    'crop-bottom': '0', 'mode': 'portfolio', 
+    'commission-type': 'bust', 'watermark-location': 'bottom', 
+    'crop-left': '0', 'frame': 'True', 'name': 'kaz'
+    }
+
+    # test case I: give invalid client
+    status, exception = handle_portfolio(None, keys[1], filename[1], correct_metadata, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case I... Passed") 
+    else: return False
+
+    # test case II: give invalid keys
+    status, exception = handle_portfolio(client, None, filename[1], correct_metadata, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case II... Passed") 
+    else: return False
+
+    # test case III: give bad filename
+    status, exception = handle_portfolio(client, keys[1], None, correct_metadata, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case III... Passed") 
+    else: return False
+
+    # test case Iv: give bad metadata
+    status, exception = handle_portfolio(client, keys[1], filename[1], None, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case IV... Passed") 
+    else: return False
+
+    # test case V: return good
+    if handle_portfolio(client, keys[1], filename[1], correct_metadata, True, True):
+        logging.info("\tTest Case V... Passed") 
+    else: return False
+    
+    logging.info("handle_portfolio_test All Tests Passed Successfully!")
     return True
 
 if __name__ == '__main__':
-    #client = boto3.client('s3')   
+    client = boto3.client('s3')   
     #validate_filetype_test(True)            
     #cleanup_temp_test(True)                      
     #upload_image_test(client, True)
     #convert_and_resize_test(True)
     #watermark_image_test(True)
-    place_frame_over_image_test(True)
+    #place_frame_over_image_test(True)
+    handle_portfolio_test(client, True, True)
 
 
 # DID SOMEBODY MENTION ART(IFYC)? https://www.youtube.com/watch?v=ru-oHqBJkxY      

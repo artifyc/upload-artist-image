@@ -6,7 +6,6 @@ from ast import literal_eval
 from urllib.parse import unquote_plus
 from transforms import RGBTransform
 from PIL import Image, ImageDraw, ImageFont 
-from lambda_function import lambda_handler as handler
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -125,14 +124,14 @@ Args:
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
-def upload_image(client, metadata, image, size, tries=1):
+def upload_image(client, metadata, image, size, tries=1, local=False):
     # input validations:
     try:
         if not metadata or not metadata['artist-uuid'] or not metadata['commission-type'] or not metadata['name']:
             logging.info("\tInvalid metadata passed into upload_image")
             raise ValueError
 
-        if size not in {"medium", "small"}: 
+        if size.split("_")[1] not in {"medium", "small"}: 
             logging.info("\tInvalid size passed into upload_image")
             raise ValueError
 
@@ -145,17 +144,22 @@ def upload_image(client, metadata, image, size, tries=1):
             raise RuntimeError
 
         buffer = io.BytesIO()
+        if image.mode != 'RGB': image = image.convert('RGB')
         image.save(buffer, 'JPEG', quality=90)
 
         prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
 
-        response = client.put_object(
-            Body=buffer.getvalue(),
-            Bucket=os.environ["s3_bucket"],
-            Key=prefix + metadata['name'] + ".jpeg"
-        )
-        logging.info("\tPicture uploaded to {}/{}".format(os.environ["s3_bucket"], prefix))
-        return response
+        if local:
+            image.save("tests/tests/upload_image_test/{}.jpeg".format(metadata['name']), "JPEG") 
+            return True
+        else:
+            response = client.put_object(
+                Body=buffer.getvalue(),
+                Bucket=os.environ["s3_bucket"],
+                Key=prefix + metadata['name'] + ".jpeg"
+            )
+            logging.info("\tPicture uploaded to {}/{}".format(os.environ["s3_bucket"], prefix))
+            return response
         
     except Exception as e:
         #logging.info("\tUpload to S3 bucket failed with exception {}, retrying...".format(e))
@@ -188,8 +192,11 @@ def convert_and_resize_portfolio_image(filename, metadata, size, client=None, lo
     # verify that all metadata crop coordinates are integers
     try:
         if not all([isinstance(x, numbers.Number) for x in (metadata['crop-left'], metadata['crop-right'], metadata['crop-top'], metadata['crop-bottom'])]):
-            logging.info("\tInvalid metadata {} passed into convert_and_resize".format(metadata))
-            raise TypeError
+            logging.info("\tInvalid metadata passed into convert_and_resize, converting...")
+            metadata['crop-left'] = int(metadata['crop-left'])
+            metadata['crop-right'] = int(metadata['crop-right'])
+            metadata['crop-top'] = int(metadata['crop-top'])
+            metadata['crop-bottom'] = int(metadata['crop-bottom'])
 
         # if this is being run on the lambda and is not a test:
         if not local and not test: path = "/tmp/" + filename
