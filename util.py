@@ -6,10 +6,19 @@ from ast import literal_eval
 from urllib.parse import unquote_plus
 from transforms import RGBTransform
 from PIL import Image, ImageDraw, ImageFont 
-from lambda_function import lambda_handler as handler
-
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+
+# alpha_composite frame over image, create 
+# small frame thickness: 7 px left
+#                       8 px top
+#                       8 px right
+#                       9 px bottom
+# medium frame thickness: 17 px top
+#                         14 px left 
+#                         14 px right
+#                        18px bottom
 
 """
 Cleans up /tmp folder of lambda after execution
@@ -38,7 +47,7 @@ Args:
 <str> filename - the name of the file being uploaded.
 <Image> image - optional Image object to verify.
 <S3Client> client- the boto3 S3 client.
-<bool> local - boolean indicating whether this function is called local or not
+<bool> local - indicates whether this method is being run locally or on a lambda.
 
 Returns:
 <bool> - returns whether the image returned was valid.
@@ -68,12 +77,14 @@ def validate_image(imgpath=None, filename=None, image=None, client=None, local=F
                 return False
     else: return False
 
+
 """
 Tint the frame such that it becomes the color the customer requested
 On failure default to gold frame
 Args:
 <bytesIO> image - image content in a buffer.
 <str> color - the color in hexadecimal representation.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bytesIO> image - image content of tinted frame in a buffer.
 """
@@ -109,17 +120,18 @@ Args:
 <Dict> metadata - image metadata with config info.
 <bytesIO> image - image buffer.
 <int> size - base width used to the resize process.
+<int> tries - number of attempts at this method.
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
-def upload_image(client, metadata, image, size, tries=1):
+def upload_image(client, metadata, image, size, tries=1, local=False):
     # input validations:
     try:
         if not metadata or not metadata['artist-uuid'] or not metadata['commission-type'] or not metadata['name']:
             logging.info("\tInvalid metadata passed into upload_image")
             raise ValueError
 
-        if size not in {"medium", "small"}: 
+        if size.split("_")[1] not in {"medium", "small"}: 
             logging.info("\tInvalid size passed into upload_image")
             raise ValueError
 
@@ -131,15 +143,23 @@ def upload_image(client, metadata, image, size, tries=1):
             logging.info("\tInvalid number of tries in this bitch")
             raise RuntimeError
 
+        buffer = io.BytesIO()
+        if image.mode != 'RGB': image = image.convert('RGB')
+        image.save(buffer, 'JPEG', quality=90)
+
         prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
 
-        response = client.put_object(
-            Body=image.getvalue(),
-            Bucket=os.environ["s3_bucket"],
-            Key=prefix + metadata['name'] + ".jpeg"
-        )
-        logging.info("\tPicture uploaded to {}/{}".format(os.environ["s3_bucket"], prefix))
-        return response
+        if local:
+            image.save("tests/tests/upload_image_test/out/{}.jpeg".format(metadata['name']), "JPEG") 
+            return True
+        else:
+            response = client.put_object(
+                Body=buffer.getvalue(),
+                Bucket=os.environ["s3_bucket"],
+                Key=prefix + metadata['name'] + ".jpeg"
+            )
+            logging.info("\tPicture uploaded to {}/{}".format(os.environ["s3_bucket"], prefix))
+            return response
         
     except Exception as e:
         #logging.info("\tUpload to S3 bucket failed with exception {}, retrying...".format(e))
@@ -152,8 +172,7 @@ def upload_image(client, metadata, image, size, tries=1):
         return response
 
 
-# TODO: add try catches
-# TODO: add situation where crop fails, create white image with question mark and upload that
+# TODO: add situation where crop fails, create white image with question mark and upload that (???)
 # initiate method failure_image for above situation
 # check dimensions to add whitespace after crop
 """
@@ -163,6 +182,8 @@ Args:
 <str> filename - the name of the file being uploaded.
 <int> size - base width used to the resize process.
 <Dict> metadata - image metadata with config info.
+<bool> local - indicates whether this method is being run locally or on a lambda.
+<bool> test - indicates whether this is a test.
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
@@ -171,8 +192,11 @@ def convert_and_resize_portfolio_image(filename, metadata, size, client=None, lo
     # verify that all metadata crop coordinates are integers
     try:
         if not all([isinstance(x, numbers.Number) for x in (metadata['crop-left'], metadata['crop-right'], metadata['crop-top'], metadata['crop-bottom'])]):
-            logging.info("\tInvalid metadata {} passed into convert_and_resize".format(metadata))
-            raise TypeError
+            logging.info("\tInvalid metadata passed into convert_and_resize, converting...")
+            metadata['crop-left'] = int(metadata['crop-left'])
+            metadata['crop-right'] = int(metadata['crop-right'])
+            metadata['crop-top'] = int(metadata['crop-top'])
+            metadata['crop-bottom'] = int(metadata['crop-bottom'])
 
         # if this is being run on the lambda and is not a test:
         if not local and not test: path = "/tmp/" + filename
@@ -216,14 +240,15 @@ def convert_and_resize_portfolio_image(filename, metadata, size, client=None, lo
 
     return whitespace
         
-# TODO: add try catches
+
 """
 Watermarks medium size images with `Artifyc`.
 Args:
 <bytesIO> buffer - image content in a buffer.
 <str> filename - the name of the file being uploaded.
 <Dict> metadata - image metadata with config info.
-
+<str> text - text words to be watermarked, defaults to `Artifyc`
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
@@ -259,23 +284,14 @@ def watermark_image_with_text(image, metadata, text="Artifyc", local=False):
 
     return image
 
-# alpha_composite frame over image, create 
-# small frame thickness: 7 px left
-#                       8 px top
-#                       8 px right
-#                       9 px bottom
-# medium frame thickness: 17 px top
-#                         14 px left 
-#                         14 px right
-#                        18px bottom
 """
-Watermarks medium size images with `Artifyc`.
+Frames our user-submitted images in relatively colored frames,
+if there is a failure, it will default to a gold frame.
 Args:
-<bytesIO> buffer - image content in a buffer.
+<bytesIO> image - image content in a buffer.
 <str> size - variable dictating size of the image (small or med).
-<S3Client> client - the boto3 S3 client.
 <str> color - metadata variable indicating color of the frame.
-
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bytesIO> buffer - returns the image content with a frame.
 """
@@ -283,21 +299,22 @@ def place_frame_over_image(image, size, color=None, local=False):
     # determine whether to use med or small frame
     try:
         filename = "framemed.png" if "med" in size else "framesmall.png"
+        backup_path = "assets/frames/gold/" + filename if not local else "assets/assets/frames/gold/"
         path = "assets/frames/greyscale/" + filename if not local else "assets/assets/frames/greyscale/"
+        image.convert('RGBA')
+        final_path = backup_path if color is None else path 
 
-        # TODO: figure out how to tint the frame color based on passed color
-        # I DID IT BITCH
-        with open(path + filename, 'rb+') as content_file:
+        with open(final_path + filename, 'rb+') as content_file:
             content = content_file.read()
             frame = Image.open(io.BytesIO(content)).convert('RGBA')
 
-            if color is not None: frame = tint_frame(frame, color, size)
-            framed_image = Image.alpha_composite(image, frame).convert('RGB')
+            if color is not None: frame = tint_frame(frame, color, size, local)
+            framed_image = Image.alpha_composite(image, frame)
 
-            buffer = io.BytesIO()
-            framed_image.save(buffer, 'JPEG', quality=90)
-            return buffer
+            #buffer = io.BytesIO()
+            #framed_image.save(buffer, 'JPEG', quality=90)
+            return framed_image
 
     except Exception as e:
-        logging.info("place_frame_over_image failed with exception: {} - {}".format(type(e).__name__, e))
+        logging.info("\tplace_frame_over_image failed with exception: {} - {}".format(type(e).__name__, e))
         return False, e

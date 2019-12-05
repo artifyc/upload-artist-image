@@ -46,32 +46,66 @@ Returns:
 None ???
 """
 def handle_portfolio(client, key, filename, metadata, local=False, test=False):
+    try:
+        if local: 
+            os.environ["width_small"] = "225,300"
+            os.environ["width_medium"] = "415,615"
+            os.environ["s3_bucket"] = "fake-bitch"
+        logging.info("Entered portfolio method...")
 
-    logging.info("Entered portfolio method...")
-    # only watermark if it's medium, smaller images do not need to be watermarked
-    for size in [s for s in os.environ if "width" in s]:
+        if not key: raise ValueError("key passed had value of None")
+        if not client: raise ValueError ("no client passed to handle portfolio method")
 
-        # convert and crop all images
-        image_buffer = convert_and_resize_portfolio_image(client, filename, os.environ[size], metadata, local=local, test=test)
+        # only watermark if it's medium, smaller images do not need to be watermarked
+        for size in [s for s in os.environ if "width" in s]:
 
-        # watermark logic
-        if "med" in size and metadata['watermark'] is True: image_buffer = watermark_image_with_text(image_buffer, filename, metadata, local=local)
+            # convert and crop all images
+            converted_img = convert_and_resize_portfolio_image(filename, metadata, os.environ[size], client=client, local=local, test=test)
+            if type(converted_img) == tuple: 
+                raise ValueError('convert and resize portfolio image failed with exception: {}'.format(converted_img[1]))
+            logging.info("\tconversion + resize successful")
+            
+            # watermark logic
+            if "medium" in size and metadata['watermark'] == 'True': 
+                watermarked_img = watermark_image_with_text(converted_img, metadata, local=local)
+                if type(watermarked_img) == tuple: 
+                    raise ValueError('watermarking image failed with exception: {}'.format(watermarked_img[1]))
+            else: 
+                watermarked_img = converted_img
+            logging.info("\twatermark successful")
 
-        # framing logic
-        if "frame-color" in metadata and metadata["frame"]: image_buffer = place_frame_over_image(image_buffer, size, client, metadata["frame-color"], local=local)  
-        elif metadata["frame"]: image_buffer = place_frame_over_image(image_buffer, size, client)
-        else: pass
+            # framing logic
+            if "frame-color" in metadata and metadata["frame"]: framed_img = place_frame_over_image(watermarked_img, size, metadata["frame-color"], local)  
+            elif metadata["frame"]: framed_img = place_frame_over_image(watermarked_img, size, client)
+            else: pass
+            if type(framed_img) == tuple: 
+                raise ValueError('framing image failed with exception: {}'.format(framed_img[1]))
+            logging.info("\tframing successful")
 
-        response = upload_image(client, metadata, image_buffer, size)
-        logging.info(response)
+            response = upload_image(client, metadata, framed_img, size, local=local)
+            if type(response) == tuple: 
+                raise ValueError('uploading image failed with exception: {}'.format(response[1]))
+            logging.info("\tuploading successful")
 
-    # delete buffered files from /S3
-    # note, can remove this directory or will the lambda freak out?
-    # may have to remove files individually
-    if not local: cleanup_temp()
-    response = client.delete_object(os.environ["s3_bucket"], key)
+        # delete buffered files from /S3 only on local
+        # note, can remove this directory or will the lambda freak out?
+        # may have to remove files individually
+        if not local: 
+            cleanup_temp()
+            response = client.delete_object(
+                Bucket=os.environ["s3_bucket"],
+                Key=key + metadata["name"] + ".jpeg"
+            )
+        if local:
+            del os.environ["width_small"]
+            del os.environ["width_medium"]
+            del os.environ["s3_bucket"]
 
-    return
+    except Exception as e:
+        logging.info("\thandle portfolio failed with exception: {} - {}".format(type(e).__name__, e))
+        return False, e
+
+    return True
     
 # for profile image
 # convert img to png + resize to circle or at least 125 x 125px
@@ -82,26 +116,10 @@ def handle_profile():
 
 # TODO
 
-
+# literally this just gets uploaded to S3 under the correct bucket / author name
 def handle_delivery():
     return
-
-    # check image path name, see if it's jpg, if it is, return the path
-    # otherwise, convert and reupload with new name, return path
-    # todo: add try-catches
 
     # client = s3 client previously created
     # prefix = the filepath within the buffer bucket with particular user's data
     # delimiter = "/"
-
-
-"""
-If any issue occurs during the processing of the image, the program
-will catch the error and execute this, putting a "wrong" image???
-This wrong image should be stored on the lambda. @ KYLE should this be implemented??
-Args:
-"""
-# TODO: add situation where crop fails
-# check dimensions to add blackspace
-#def failure_image:
-    #return

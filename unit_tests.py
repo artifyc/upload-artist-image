@@ -1,5 +1,6 @@
-#from lambda_function import lambda_handler as handler
+from lambda_function import handle_portfolio, handle_delivery, handle_profile
 import logging, statistics, math, boto3
+#boto3
 from pathlib import Path
 from util import *
 from PIL import Image, ImageDraw, ImageFont 
@@ -13,7 +14,7 @@ Test fails if:
     - the directory was deleted by the cleanup_temp
     - there were more than 0 files in the tmp directory after cleanup
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -48,7 +49,7 @@ def cleanup_temp_test(local=False):
 """
 Tests whether the filetype test is working
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -65,7 +66,7 @@ Tints the frames 3 colors and ensures they are within acceptable color bounds.
 If frame tinting fails, should return the gold frame.
 TODO: THIS TEST WILL NEED TO BE REWRITTEN TO SUPPORT DIFFERENT FRAME TYPES
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -98,7 +99,7 @@ def tint_frame_test(local=False):
                 most_common_color = sorted(colors, key=lambda x: x[0], reverse=True)[0]
                 if local: 
                     img.save("tests/tests/tint_frame_test/{}.png".format(color), "PNG")
-                    cleanup_temp("tests/tests/tint_frame_test")
+                    #cleanup_temp("tests/tests/tint_frame_test")
     except Exception as e:
         logging.info("\tTest Case II... Failed\nException: {}".format(e))
     logging.info("\tTest Case II...  Passed")
@@ -121,7 +122,7 @@ Verifies that the upload_image_test works correctly by uploading a sample img,
 verifying it with a get_obj, then deleting that image from S3. 
 Args:
 <S3Client> client- the boto3 S3 client.
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -129,8 +130,8 @@ def upload_image_test(client, local=False):
 
     logging.info("upload_image Test Entered")
     # create fake image either on lambda or locally
-    filepath = "/tmp" if not local else "tests/tests/upload_file_test/"
-    path = "tests/tests/upload_file_test/" if local else "tests/upload_file_test/"
+    filepath = "/tmp" if not local else "tests/tests/upload_image_test/"
+    path = "tests/tests/upload_image_test/" if local else "tests/upload_image_test/"
 
     metadata = {"artist-uuid": "test", "commission-type": "test-type", "name": "testfile"}
     if local: os.environ["s3_bucket"] = "artifyc-user-images-qa"
@@ -257,7 +258,7 @@ def convert_and_resize_test(local=False):
 Verifies that the watermark_image_test works correctly by testing different permutations of sizes,
 watermark areas, etc. 
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test failed.
 """
@@ -301,37 +302,173 @@ def watermark_image_test(local=False):
 """
 Verifies that the function places the frame over the edges of the image, in its correct color.
 Args:
-<bool> local - indicated whether this test is being run locally or on a lambda.
+<bool> local - indicates whether this method is being run locally or on a lambda.
 Returns:
 <bool> - True if test was successful, False if test suite failed.
 """
-def test_place_frame_over_image(local=False):
+def place_frame_over_image_test(local=False):
+
+    logging.info("place_frame_over_image_test Test Entered")
 
     # place_frame_over_image(image, size, color=None, local=False)
     # Test Case I: attempt with None image
-    size = "width_small"
-    color = "ffffff"
+    size = "width_med"
+    colors = ["#ffffff",'#34FAFA']
+    path = "tests/tests/place_frame_over_image_test/"
+    filename = 'uMRP5D9_resize.jpg'
 
+    # test case I, passing invalid image
     status, exception = place_frame_over_image(None, size, color=None, local=local)
-    if type(exception).__name__ == "ValueError": logging.info("\tTest Case I... Passed") 
-    return False
+    if type(exception).__name__ == "AttributeError": logging.info("\tTest Case I... Passed") 
+    else: return False
 
+    #try:
+    with open(path + filename, 'rb+') as content_file:
+        original_image = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
+
+        # test case II, passing correct image and invalid size
+        status, exception = place_frame_over_image(original_image, None, color=None, local=local)
+        if type(exception).__name__ == "TypeError": logging.info("\tTest Case II... Passed") 
+        else: return False
+
+        # test case III, passing correct image, size, no color, should succeed
+        framed_image = place_frame_over_image(original_image, size, color=None, local=local)
+        if type(framed_image) == tuple: 
+            logging.info("\tTest Case III... Failed") 
+            return False
+        else: 
+            framed_image = framed_image.convert("RGB")
+            framed_image.save(path + "out/{}_".format(size) + filename, "JPEG", quality=90)
+        logging.info("\tTest Cases III... Passed")
+
+        # for test cases IV & V, passing correct img, size, and now color
+        for color in colors:
+            new_image = place_frame_over_image(original_image, size, color, local=local)
+            if type(new_image) == tuple:
+                logging.info("\tTest Cases IV & V... Failed") 
+                return False
+            else: 
+                new_image = new_image.convert("RGB")
+                new_image.save(path + "out/{}_".format(color.lstrip('#')) + filename, "JPEG", quality=90)
+        logging.info("\tTest Cases IV & V... Passed")
+
+    content_file.close()
+    logging.info("convert_and_resize_test All Tests Passed Successfully!")
+    return True
+
+    #except Exception as e:
+    #    logging.info("place_frame_over_image failed with exception: {}".format(e))
+    #    return False
+
+"""
+{
+  "ResponseMetadata": {
+    "RequestId": "9F112A3FC0DF4BF0",
+    "HostId": "c8oYc6QCgtTSChKmz/EqR3cSjARDUx7rPx3TsdjHErDHz/xljlLOsxssjgNYWV2216T9lIuMhEA=",
+    "HTTPStatusCode": 200,
+    "HTTPHeaders": {
+      "x-amz-id-2": "c8oYc6QCgtTSChKmz/EqR3cSjARDUx7rPx3TsdjHErDHz/xljlLOsxssjgNYWV2216T9lIuMhEA=",
+      "x-amz-request-id": "9F112A3FC0DF4BF0",
+      "date": "Wed, 13 Nov 2019 02:07:16 GMT",
+      "x-amz-bucket-region": "us-east-1",
+      "content-type": "application/xml",
+      "transfer-encoding": "chunked",
+      "server": "AmazonS3"
+    },
+    "RetryAttempts": 0
+  },
+  "IsTruncated": "False",
+  "Contents": [
+    {
+      "Key": "upload-buffer/temp-bucket-299211192/",
+      "LastModified": "datetime.datetime(2019, 10, 29, 23, 34, 29, tzinfo=tzlocal())",
+      "ETag": "d41d8cd98f00b204e9800998ecf8427e",
+      "Size": 0,
+      "StorageClass": "STANDARD"
+    },
+    {
+      "Key": "upload-buffer/temp-bucket-299211192/bd67f374-10eb-4791-b38f-0b590be62542.jpeg",
+      "LastModified": "datetime.datetime(2019, 11, 11, 16, 44, 33, tzinfo=tzlocal())",
+      "ETag": "503e1ca476190962b905b4074fd53cfd",
+      "Size": 17175,
+      "StorageClass": "STANDARD"
+    },
+    {
+      "Key": "upload-buffer/temp-bucket-299211192/kaz.png",
+      "LastModified": "datetime.datetime(2019, 11, 13, 2, 7, 14, tzinfo=tzlocal())",
+      "ETag": "ee72b223ba8463ba5e1b42ca1662ab8f",
+      "Size": 102883,
+      "StorageClass": "STANDARD"
+    }
+  ],
+  "Name": "artifyc-user-images-qa",
+  "Prefix": "upload-buffer/temp-bucket-299211192/",
+  "Delimiter": "/",
+  "MaxKeys": 1000,
+  "EncodingType": "url",
+  "KeyCount": 3
+}
+"""
+# def handle_portfolio(client, key, filename, metadata, local=False, test=False)
+def handle_portfolio_test(client, local=False, test=True):
+    logging.info("handle_portfolio_test Test Entered")
+
+    keys = [None, 
+    "upload-buffer/temp-bucket-299211192/bebop.jpeg",
+    "upload-buffer/no-artist-id/fake-image.jpg",
+    "fake-buffer/temp-bucket-299211192/fake-image.jpg"
+    ]
+
+    filename = [None, "bebop.png", "fake-image.jpg", "fake-image.jpg"]
+
+    correct_metadata = {
+    'price': '$$', 'crop-right': '0', 'crop-top': '0',
+    'tags': "['neo yokio', 'kaz', 'pastel']",
+    'watermark': 'True', 'artist-uuid': '299211192',
+    'frame-color': '#a7cade', 'artist-username': 'archangelo', 
+    'crop-bottom': '0', 'mode': 'portfolio', 
+    'commission-type': 'bust', 'watermark-location': 'middle', 
+    'crop-left': '0', 'frame': 'True', 'name': 'spike'
+    }
+
+    # test case I: give invalid client
+    status, exception = handle_portfolio(None, keys[1], filename[1], correct_metadata, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case I... Passed") 
+    else: return False
+
+    # test case II: give invalid keys
+    status, exception = handle_portfolio(client, None, filename[1], correct_metadata, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case II... Passed") 
+    else: return False
+
+    # test case III: give bad filename
+    status, exception = handle_portfolio(client, keys[1], None, correct_metadata, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case III... Passed") 
+    else: return False
+
+    # test case Iv: give bad metadata
+    status, exception = handle_portfolio(client, keys[1], filename[1], None, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case IV... Passed") 
+    else: return False
+
+    # test case V: return good
+    if handle_portfolio(client, keys[1], filename[1], correct_metadata, True, True):
+        logging.info("\tTest Case V... Passed") 
+    else: return False
     
-    status, exception = place_frame_over_image(None, size, color=None, local=local)
-    if type(exception).__name__ == "ValueError": logging.info("\tTest Case I... Passed") 
-    return False
-
-def test_portfolio():
-    handler(None, None, local=True, test=True)
+    logging.info("handle_portfolio_test All Tests Passed Successfully!")
     return True
 
 if __name__ == '__main__':
-    #client = boto3.client('s3')   
+    client = boto3.client('s3')   
     #validate_filetype_test(True)            
     #cleanup_temp_test(True)                      
     #upload_image_test(client, True)
     #convert_and_resize_test(True)
-    watermark_image_test(True)
+    #watermark_image_test(True)
+    #place_frame_over_image_test(True)
+    #tint_frame_test(True)
+    handle_portfolio_test(client, True, True)
 
 
 # DID SOMEBODY MENTION ART(IFYC)? https://www.youtube.com/watch?v=ru-oHqBJkxY      
