@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.vscode/
 
 # C extensions
 *.so
@@ -24,6 +25,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+Pipfile
 
 .DS_Store
 

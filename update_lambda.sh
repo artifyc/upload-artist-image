@@ -4,6 +4,10 @@ cd ../fonts
 zip -r9 ../function.zip *
 cd ../numpy
 zip -r9 ../function.zip *
+cd ../tests
+zip -r9 ../function.zip *
+cd ../assets
+zip -r9 ../function.zip *
 cd ../
 zip -g function.zip lambda_function.py util.py transforms.py
 echo "Publishing lambda version..."
