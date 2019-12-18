@@ -1,9 +1,10 @@
-import json, uuid, os, io, sys, logging, argparse
+import json, uuid, os, io, sys, logging, argparse, configparser
 if os.environ.get("s3_bucket") is not None: import boto3
 #from botocore.exceptions import ClientError
 from util import *
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+config = configparser.ConfigParser()
 
 # Steps:
 # obtain metadata from event photo file
@@ -47,26 +48,24 @@ None ???
 """
 def handle_portfolio(client, key, filename, metadata, local=False, test=False):
     try:
-        if local: 
-            os.environ["width_small"] = "225,300"
-            os.environ["width_medium"] = "415,615"
-            os.environ["s3_bucket"] = "fake-bitch"
         logging.info("Entered portfolio method...")
 
         if not key: raise ValueError("key passed had value of None")
         if not client: raise ValueError ("no client passed to handle portfolio method")
 
+        sizes = [config['DEFAULT']["small"], config['DEFAULT']["medium"]] if local else [os.environ["small"], os.environ["medium"]]
+
         # only watermark if it's medium, smaller images do not need to be watermarked
-        for size in [s for s in os.environ if "width" in s]:
+        for size in sizes:
 
             # convert and crop all images
-            converted_img = convert_and_resize_portfolio_image(filename, metadata, os.environ[size], client=client, local=local, test=test)
+            converted_img = convert_and_resize_portfolio_image(filename, metadata, size, client=client, local=local, test=test)
             if type(converted_img) == tuple: 
                 raise ValueError('convert and resize portfolio image failed with exception: {}'.format(converted_img[1]))
             logging.info("\tconversion + resize successful")
             
             # watermark logic
-            if "medium" in size and metadata['watermark'] == 'True': 
+            if metadata['watermark'] == 'True': 
                 watermarked_img = watermark_image_with_text(converted_img, metadata, local=local)
                 if type(watermarked_img) == tuple: 
                     raise ValueError('watermarking image failed with exception: {}'.format(watermarked_img[1]))
@@ -96,10 +95,6 @@ def handle_portfolio(client, key, filename, metadata, local=False, test=False):
                 Bucket=os.environ["s3_bucket"],
                 Key=key + metadata["name"] + ".jpeg"
             )
-        if local:
-            del os.environ["width_small"]
-            del os.environ["width_medium"]
-            del os.environ["s3_bucket"]
 
     except Exception as e:
         logging.info("\thandle portfolio failed with exception: {} - {}".format(type(e).__name__, e))

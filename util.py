@@ -1,4 +1,4 @@
-import os, shutil, uuid, io, sys, numbers
+import os, shutil, uuid, io, sys, numbers, configparser
 if os.environ.get("s3_bucket") is not None: import boto3
 import logging
 from math import floor
@@ -8,6 +8,7 @@ from transforms import RGBTransform
 from PIL import Image, ImageDraw, ImageFont 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+config = configparser.ConfigParser()
 
 
 # alpha_composite frame over image, create 
@@ -65,7 +66,7 @@ def validate_image(imgpath=None, filename=None, image=None, client=None, local=F
     if imgpath.endswith(('.png', '.jpg', '.tiff', '.jpeg')):
             # fetch actual photo and download it to the lambda
             if not local: 
-                client.download_file(os.environ["s3_bucket"], imgpath, "/tmp/" + filename)
+                client.download_file(os.environ["s3_bucket"], imgpath, config['DEFAULT']['image_path'] + filename)
             try:
                 with open(imgpath, 'rb+') as content_file:
                     img = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
@@ -99,8 +100,8 @@ def tint_frame(image, color, size, local=False):
 
     except Exception as e:
         logging.info("\ttint_frame failed with exception: {}. Falling back to gold...".format(e))
-        path = "assets/assets/frames/gold/" if local else "assets/frames/gold/"
-        filename = "framemed.png" if "med" in size else "framesmall.png"
+        path = config["DEFAULT"]["asset_dir_local"] if local else config["DEFAULT"]["asset_dir_lambda"]
+        filename = config["DEFAULT"]["medium_frame"] if "medium" in size else config["DEFAULT"]["small_frame"]
 
         # open regular gold frame file
         with open(path + filename, 'rb+') as content_file:
@@ -131,7 +132,7 @@ def upload_image(client, metadata, image, size, tries=1, local=False):
             logging.info("\tInvalid metadata passed into upload_image")
             raise ValueError
 
-        if size.split("_")[1] not in {"medium", "small"}: 
+        if size not in {config["DEFAULT"]["medium"], config["DEFAULT"]["small"]}: 
             logging.info("\tInvalid size passed into upload_image")
             raise ValueError
 
@@ -147,10 +148,11 @@ def upload_image(client, metadata, image, size, tries=1, local=False):
         if image.mode != 'RGB': image = image.convert('RGB')
         image.save(buffer, 'JPEG', quality=90)
 
+        #TODO: rewrite this to handle other types like portfolio images, 
         prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
 
         if local:
-            image.save("tests/tests/upload_image_test/out/{}.jpeg".format(metadata['name']), "JPEG") 
+            image.save(config["DEFAULT"]["upload_test"] + "{}.jpeg".format(metadata['name']), "JPEG") 
             return True
         else:
             response = client.put_object(
@@ -199,11 +201,11 @@ def convert_and_resize_portfolio_image(filename, metadata, size, client=None, lo
             metadata['crop-bottom'] = int(metadata['crop-bottom'])
 
         # if this is being run on the lambda and is not a test:
-        if not local and not test: path = "/tmp/" + filename
-        # if we are running locally and testing, use the testing directory
-        elif not local and test: path = "tests/convert_and_resize_test/" + filename
-        # if we are running a test from the lambda, use this directory
-        else: path = "tests/tests/convert_and_resize_test/" + filename
+        if not local and not test: path = config["DEFAULT"]["image_path"] + filename
+        # if we are not running locally and testing, use the lambda directory
+        elif not local and test: path = config["DEFAULT"]["test_dir_lambda"] + filename
+        # if we are running a test from local, use this directory
+        else: path = config["DEFAULT"]["test_dir_local"] + filename
 
         # validate_image(imgpath=None, filename=None, image=None, client=None, local=False)
         if not validate_image(imgpath=path, filename=filename, client=client, local=local):
@@ -258,7 +260,7 @@ def watermark_image_with_text(image, metadata, text="Artifyc", local=False):
 
         draw = ImageDraw.Draw(imageWatermark)
 
-        path = os.environ['font_path'] + 'Raleway-Bold.ttf' if not local else "fonts/fonts/Raleway-Bold.ttf"
+        path = config["DEFAULT"]["lambda_font"] if not local else config["DEFAULT"]["local_font"]
         
         width, height = image.size
         small_map = {'top': 10, 'middle': 2, 'bottom': 1.10}
@@ -298,9 +300,9 @@ Returns:
 def place_frame_over_image(image, size, color=None, local=False):
     # determine whether to use med or small frame
     try:
-        filename = "framemed.png" if "med" in size else "framesmall.png"
-        backup_path = "assets/frames/gold/" + filename if not local else "assets/assets/frames/gold/"
-        path = "assets/frames/greyscale/" + filename if not local else "assets/assets/frames/greyscale/"
+        filename = config["DEFAULT"]["medium_frame"] if "medium" in size else config["DEFAULT"]["small_frame"]
+        backup_path = config["DEFAULT"]["gold_lambda"] if not local else config["DEFAULT"]["gold_local"]
+        path = config["DEFAULT"]["grey_lambda"] if not local else config["DEFAULT"]["grey_local"]
         image.convert('RGBA')
         final_path = backup_path if color is None else path 
 

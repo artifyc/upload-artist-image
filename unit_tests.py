@@ -1,6 +1,5 @@
 from lambda_function import handle_portfolio, handle_delivery, handle_profile
 import logging, statistics, math, boto3
-#boto3
 from pathlib import Path
 from util import *
 from PIL import Image, ImageDraw, ImageFont 
