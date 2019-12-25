@@ -1,5 +1,5 @@
 from lambda_function import handle_portfolio, handle_delivery, handle_profile
-import logging, statistics, math, boto3, configparser
+import logging, statistics, math, boto3, configparser, traceback
 from pathlib import Path
 from util import *
 from PIL import Image, ImageDraw, ImageFont 
@@ -462,9 +462,9 @@ def handle_portfolio_test(client, local=False, test=True):
 
 def handle_profile_test(client, local=False, test=False):
 
-    metadata = {"crop-left": 0, "crop-top": 0, "crop-right": 0, "crop-bottom": 0}
-    key = config["DEFAULT"]["samples"]
-    filename = 'spike.jpeg'
+    metadata = {"crop-left": 0, "crop-top": 0, "crop-right": 0, "crop-bottom": 0, "artist-uuid":"69"}
+    key = config["PATHS"]["samples"]
+    filename = "spike.jpeg"
 
     # test case I: give invalid client
     exception = handle_profile(None, key, filename, metadata, True, True)
@@ -486,7 +486,7 @@ def handle_profile_test(client, local=False, test=False):
     if type(exception).__name__ == "ValueError": logging.info("\tTest Case IV... Passed") 
     else: return False
 
-    if handle_profile(client, config["DEFAULT"]["samples"] + 'spike.jpeg', 'spike.jpeg', metadata, local, test):
+    if handle_profile(client, str(config["PATHS"]["samples"]) + filename, filename, metadata, local, test):
         logging.info("\tTest Case V... Passed")
     else: return False
 

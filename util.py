@@ -1,4 +1,4 @@
-import os, shutil, uuid, io, sys, numbers, configparser
+import os, shutil, uuid, io, sys, numbers, configparser, traceback
 if os.environ.get("s3_bucket") is not None: import boto3
 import logging
 from math import floor
@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 config = configparser.ConfigParser()
+config.read('configs.ini')
 
 
 # alpha_composite frame over image, create 
@@ -63,6 +64,7 @@ Returns:
 """
 def validate_image(key=None, bucket=None, filename=None, image=None, client=None, local=False):
     # this check necessary because may be passed foldernames
+    logging.info(str(key))
     if image:
         try:
             image.verify()
@@ -71,19 +73,20 @@ def validate_image(key=None, bucket=None, filename=None, image=None, client=None
             logging.info("\tImage is invalid with exception: {}".format(e))
             return False
 
-    if key.endswith(config['DEFAULT']['valid_filepaths']):
-            # fetch actual photo and download it to the lambda
-            if not local: 
-                client.download_file(bucket, key, config['DEFAULT']['image_path'] + filename)
-            try:
-                with open(key, 'rb+') as content_file:
-                    img = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
-                    img.verify()
-                    img.close()
-                    return True
-            except Exception as e:
-                logging.info("\tImage is invalid with exception: {}".format(e))
-                return False
+    if key.endswith(tuple(config['DEFAULT']['valid_filepaths'].split(','))):
+        logging.info("\tkey ends with valid extention")
+        # fetch actual photo and download it to the lambda
+        if not local:
+            client.download_file(bucket, key, str(config['PATHS']['image_path'] + filename))
+        try:
+            with open(key, 'rb+') as content_file:
+                img = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
+                img.verify()
+                img.close()
+                return True
+        except Exception as e:
+            logging.info("\tImage is invalid with exception: {}".format(e))
+            return False
     else: return False
 
 
@@ -108,8 +111,8 @@ def tint_frame(image, color, size, local=False):
 
     except Exception as e:
         logging.info("\ttint_frame failed with exception: {}. Falling back to gold...".format(e))
-        path = config["DEFAULT"]["asset_dir_local"] if local else config["DEFAULT"]["asset_dir_lambda"]
-        filename = config["DEFAULT"]["medium_frame"] if "medium" in size else config["DEFAULT"]["small_frame"]
+        path = config["PATHS"]["asset_dir_local"] if local else config["PATHS"]["asset_dir_lambda"]
+        filename = config["IMAGES"]["medium_frame"] if "medium" in size else config["IMAGES"]["small_frame"]
 
         # open regular gold frame file
         with open(path + filename, 'rb+') as content_file:
@@ -140,7 +143,7 @@ def upload_image(client, metadata, image, mode, size=None, tries=1, local=False)
             logging.info("\tInvalid metadata passed into upload_image")
             raise ValueError
 
-        if size is not None and size not in {config["DEFAULT"]["medium"], config["DEFAULT"]["small"], config["DEFAULT"]["profile_size"]}: 
+        if size is not None and size not in {config["SIZES"]["medium"], config["SIZES"]["small"], config["SIZES"]["profile_size"]}: 
             logging.info("\tInvalid size passed into upload_image")
             raise ValueError
 
@@ -153,36 +156,41 @@ def upload_image(client, metadata, image, mode, size=None, tries=1, local=False)
             raise RuntimeError
 
         buffer = io.BytesIO()
-        if image.mode != 'RGB': image = image.convert('RGB')
-        image.save(buffer, 'JPEG', quality=90)
+        extension = '.png' if mode == 'aria' else '.jpeg'
+        img_type = 'PNG' if mode == 'aria' else 'JPEG'
 
-        bucket = os.environ['orders_bucket'] if mode == 'delivery' else os.environ['users_bucket']
+        if image.mode != 'RGB' and mode != 'aria': 
+            image = image.convert('RGB')
+            image.save(buffer, 'JPEG', quality=90)
+        else:
+            image.save(buffer, 'PNG', quality=90)
+
+        if not local: bucket = os.environ['orders_bucket'] if mode == 'delivery' else os.environ['users_bucket']
 
         #TODO: rewrite this to handle other types like portfolio images,
         # portfolio has 2 paths, one for each size
         # aria is the small circular image in the top right corner of the navbar
         # profile image is the square img embedded in the profile 
-        if "portfolio" in mode and size == config["DEFAULT"]["small"]:
+        if "portfolio" in mode and size == config["SIZES"]["small"]:
             path = '/users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/search/' + uuid.uuid4()
-        elif "portfolio" in mode and size == config["DEFAULT"]["medium"]:
+        elif "portfolio" in mode and size == config["SIZES"]["medium"]:
             path = '/users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/expanded/' + uuid.uuid4()
         elif "profile" in mode:
             path = '/users/' + metadata['artist-uuid'] + '/profile'
         elif "aria" in mode:
             path = '/users/' + metadata['artist-uuid'] + '/aria'
-
         else:
             path = '/orders/' + metadata['order-uuid'] + '/' + metadata['name']
 
         if local:
-            image.save(config["DEFAULT"]["upload_test"] + "{}.jpeg".format(metadata['name']), "JPEG") 
+            image.save(config["PATHS"]["upload_test"] + path.split('/')[len(path.split('/'))-1] + extension, img_type)
             return True
 
         else:
             response = client.put_object(
                 Body=buffer.getvalue(),
                 Bucket=bucket,
-                Key=path + '.jpeg'
+                Key=path + extension
             )
             logging.info("\tPicture uploaded to {}/{}".format(bucket, path))
             return response
@@ -191,10 +199,10 @@ def upload_image(client, metadata, image, mode, size=None, tries=1, local=False)
         #logging.info("\tUpload to S3 bucket failed with exception {}, retrying...".format(e))
         if tries < 3: 
             #logging.info("Upload to S3 bucket failed with exception {}. Try number {}".format(e, tries))
-            return upload_image(client, metadata, image, size, tries+1)
+            return upload_image(client, metadata, image, mode, size, tries=tries+1, local=local)
         elif tries >= 3: 
             logging.info("\tUpload to S3 bucket and 3 retries failed with exception {}".format(e))
-            return False, e
+            return e
         return response
 
 
@@ -217,6 +225,9 @@ def convert_and_resize_portfolio_image(filename, key, metadata, size=None, clien
     # input validations:
     # verify that all metadata crop coordinates are integers
     try:
+        if not [value for key, value in metadata.items() if 'crop' in key.lower()]:
+            raise ValueError("metadata was passed with invalid value")
+
         if not all([isinstance(x, numbers.Number) for x in (metadata['crop-left'], metadata['crop-right'], metadata['crop-top'], metadata['crop-bottom'])]):
             logging.info("\tInvalid metadata passed into convert_and_resize, converting...")
             metadata['crop-left'] = int(metadata['crop-left'])
@@ -225,11 +236,11 @@ def convert_and_resize_portfolio_image(filename, key, metadata, size=None, clien
             metadata['crop-bottom'] = int(metadata['crop-bottom'])
 
         # if this is being run on the lambda and is not a test:
-        if not local and not test: path = config["DEFAULT"]["image_path"] + filename
+        if not local and not test: path = config["PATHS"]["image_path"] + filename
         # if we are not running locally and testing, use the lambda directory
-        elif not local and test: path = config["DEFAULT"]["test_dir_lambda"] + filename
+        elif not local and test: path = config["PATHS"]["test_dir_lambda"] + filename
         # if we are running a test from local, use this directory
-        else: path = config["DEFAULT"]["test_dir_local"] + filename
+        else: path = config["PATHS"]["test_dir_local"] + filename
 
         # validate_image(imgpath=None, filename=None, image=None, client=None, local=False)
         if not validate_image(key=key, filename=filename, client=client, local=local):
@@ -261,7 +272,7 @@ def convert_and_resize_portfolio_image(filename, key, metadata, size=None, clien
             whitespace.paste(image, (centered_width, centered_height))
                 
     except Exception as e:
-        logging.info("\tconvert_and_resize failed with exception {}".format(e))
+        logging.info("\tconvert_and_resize failed with exception {}".format(traceback.print_exc()))
         return e
 
     return whitespace
@@ -282,7 +293,7 @@ def watermark_image_with_text(image, metadata, text="Artifyc", local=False):
     try: 
         imageWatermark = Image.new('RGBA', image.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(imageWatermark)
-        path = config["DEFAULT"]["lambda_font"] if not local else config["DEFAULT"]["local_font"]
+        path = config["FONTS"]["lambda_font"] if not local else config["FONTS"]["local_font"]
         
         width, height = image.size
         small_map = {'top': 10, 'middle': 2, 'bottom': 1.10}
@@ -322,9 +333,9 @@ Returns:
 def place_frame_over_image(image, size, color=None, local=False):
     # determine whether to use med or small frame
     try:
-        filename = config["DEFAULT"]["medium_frame"] if "medium" in size else config["DEFAULT"]["small_frame"]
-        backup_path = config["DEFAULT"]["gold_lambda"] if not local else config["DEFAULT"]["gold_local"]
-        path = config["DEFAULT"]["grey_lambda"] if not local else config["DEFAULT"]["grey_local"]
+        filename = config["IMAGES"]["medium_frame"] if "medium" in size else config["IMAGES"]["small_frame"]
+        backup_path = config["PATHS"]["gold_lambda"] if not local else config["PATHS"]["gold_local"]
+        path = config["PATHS"]["grey_lambda"] if not local else config["PATHS"]["grey_local"]
         image.convert('RGBA')
         final_path = backup_path if color is None else path 
 
@@ -345,21 +356,22 @@ def place_frame_over_image(image, size, color=None, local=False):
 
 def crop_profile_image(client, filename, key, metadata, local=False, test=False):
     try:
-        square_image = convert_and_resize_portfolio_image(filename, key, metadata, config["DEFAULT"]["profile_size"], client, local, test)
+        square_image = convert_and_resize_portfolio_image(filename, key, metadata, config["SIZES"]["profile_size"], client, local, test)
+        if isinstance(square_image, Exception):
+            raise square_image
 
         bigsize = (square_image.size[0] * 3, square_image.size[1] * 3)
         mask = Image.new('L', bigsize, 0)
         draw = ImageDraw.Draw(mask) 
-
         draw.ellipse((0, 0) + bigsize, fill=255)
         mask = mask.resize(square_image.size, Image.ANTIALIAS)
         square_image.putalpha(mask)
 
-        round_img = ImageOps.fit(square_image, mask.size, centering=(0.5, 0.5))
-        round_img.putalpha(mask)
+        output = ImageOps.fit(square_image, mask.size, centering=(0.5, 0.5))
+        output.putalpha(mask)
 
-        return round_img, square_image
+        return output, square_image
 
     except Exception as e:
         logging.info("\tcrop_profile_image failed with exception: {} - {}".format(type(e).__name__, e))
-        return e
+        return e, False

@@ -1,4 +1,4 @@
-import json, uuid, os, io, sys, logging, argparse, configparser
+import json, uuid, os, io, sys, logging, argparse, configparser, traceback
 if os.environ.get("s3_bucket") is not None: import boto3
 #from botocore.exceptions import ClientError
 from util import *
@@ -61,6 +61,7 @@ def handle_portfolio(client, key, filename, metadata, local=False, test=False):
 
         if not key: raise ValueError("key passed had value of None")
         if not client: raise ValueError ("no client passed to handle portfolio method")
+        if not filename: raise ValueError("no filename passed to the handle profile method")
 
         sizes = [config['DEFAULT']["small"], config['DEFAULT']["medium"]] if local else [os.environ["small"], os.environ["medium"]]
 
@@ -116,19 +117,20 @@ def handle_profile(client, key, filename, metadata, local=False, test=False):
 
     try:
         if not key: raise ValueError("key passed had value of None")
-        if not client: raise ValueError ("no client passed to handle portfolio method")
+        if not client: raise ValueError ("no client passed to handle profile method")
+        if not filename: raise ValueError("no filename passed to the handle profile method")
+        if not metadata: raise ValueError("no metadata passed to handle profile method")
 
-        images = crop_profile_image(client, filename, key, metadata, local=False, test=False)
-        if type(images) == Exception: 
-                raise ValueError('convert and resize portfolio image failed with exception: {}'.format(images))
-        logging.info("\tconversion + resize successful")
+        round_img, square_img = crop_profile_image(client, filename, key, metadata, local, test)
+        if isinstance(round_img, Exception): 
+                raise ValueError('convert and resize portfolio image in profile handler failed with exception: {}'.format(round_img))
 
-        response = upload_image(client, metadata, images[0], 'aria', local=local)
-        if type(response) == Exception: 
+        response = upload_image(client, metadata, round_img, 'aria', local=local)
+        if isinstance(response, Exception): 
             raise ValueError('uploading image failed with exception: {}'.format(response))
 
-        response = upload_image(client, metadata, images[1], 'profile', local=local)
-        if type(response) == Exception: 
+        response = upload_image(client, metadata, square_img, 'profile', local=local)
+        if isinstance(response, Exception): 
             raise ValueError('uploading image failed with exception: {}'.format(response))
         logging.info("\tuploading images successful")
 
