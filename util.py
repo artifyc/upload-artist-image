@@ -5,7 +5,7 @@ from math import floor
 from ast import literal_eval
 from urllib.parse import unquote_plus
 from transforms import RGBTransform
-from PIL import Image, ImageDraw, ImageFont 
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 config = configparser.ConfigParser()
@@ -38,6 +38,14 @@ def cleanup_temp(folder='/tmp'):
             return False
     return True
 
+"""
+
+"""
+def delete_file(client, key, metadata):
+    return client.delete_object(
+        Bucket=os.environ["s3_bucket"],
+        Key=key + metadata["name"] + ".jpeg"
+    )
 
 """
 Validates image in one of two ways:
@@ -53,7 +61,7 @@ Args:
 Returns:
 <bool> - returns whether the image returned was valid.
 """
-def validate_image(imgpath=None, filename=None, image=None, client=None, local=False):
+def validate_image(key=None, bucket=None, filename=None, image=None, client=None, local=False):
     # this check necessary because may be passed foldernames
     if image:
         try:
@@ -63,12 +71,12 @@ def validate_image(imgpath=None, filename=None, image=None, client=None, local=F
             logging.info("\tImage is invalid with exception: {}".format(e))
             return False
 
-    if imgpath.endswith(('.png', '.jpg', '.tiff', '.jpeg')):
+    if key.endswith(config['DEFAULT']['valid_filepaths']):
             # fetch actual photo and download it to the lambda
             if not local: 
-                client.download_file(os.environ["s3_bucket"], imgpath, config['DEFAULT']['image_path'] + filename)
+                client.download_file(bucket, key, config['DEFAULT']['image_path'] + filename)
             try:
-                with open(imgpath, 'rb+') as content_file:
+                with open(key, 'rb+') as content_file:
                     img = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
                     img.verify()
                     img.close()
@@ -125,14 +133,14 @@ Args:
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
-def upload_image(client, metadata, image, size, tries=1, local=False):
+def upload_image(client, metadata, image, mode, size=None, tries=1, local=False):
     # input validations:
     try:
-        if not metadata or not metadata['artist-uuid'] or not metadata['commission-type'] or not metadata['name']:
+        if not metadata or not metadata['artist-uuid']:
             logging.info("\tInvalid metadata passed into upload_image")
             raise ValueError
 
-        if size not in {config["DEFAULT"]["medium"], config["DEFAULT"]["small"]}: 
+        if size is not None and size not in {config["DEFAULT"]["medium"], config["DEFAULT"]["small"], config["DEFAULT"]["profile_size"]}: 
             logging.info("\tInvalid size passed into upload_image")
             raise ValueError
 
@@ -148,19 +156,35 @@ def upload_image(client, metadata, image, size, tries=1, local=False):
         if image.mode != 'RGB': image = image.convert('RGB')
         image.save(buffer, 'JPEG', quality=90)
 
-        #TODO: rewrite this to handle other types like portfolio images, 
-        prefix = 'users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/' + size + '/'
+        bucket = os.environ['orders_bucket'] if mode == 'delivery' else os.environ['users_bucket']
+
+        #TODO: rewrite this to handle other types like portfolio images,
+        # portfolio has 2 paths, one for each size
+        # aria is the small circular image in the top right corner of the navbar
+        # profile image is the square img embedded in the profile 
+        if "portfolio" in mode and size == config["DEFAULT"]["small"]:
+            path = '/users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/search/' + uuid.uuid4()
+        elif "portfolio" in mode and size == config["DEFAULT"]["medium"]:
+            path = '/users/' + metadata['artist-uuid'] + '/' + metadata['commission-type'] + '/expanded/' + uuid.uuid4()
+        elif "profile" in mode:
+            path = '/users/' + metadata['artist-uuid'] + '/profile'
+        elif "aria" in mode:
+            path = '/users/' + metadata['artist-uuid'] + '/aria'
+
+        else:
+            path = '/orders/' + metadata['order-uuid'] + '/' + metadata['name']
 
         if local:
             image.save(config["DEFAULT"]["upload_test"] + "{}.jpeg".format(metadata['name']), "JPEG") 
             return True
+
         else:
             response = client.put_object(
                 Body=buffer.getvalue(),
-                Bucket=os.environ["s3_bucket"],
-                Key=prefix + metadata['name'] + ".jpeg"
+                Bucket=bucket,
+                Key=path + '.jpeg'
             )
-            logging.info("\tPicture uploaded to {}/{}".format(os.environ["s3_bucket"], prefix))
+            logging.info("\tPicture uploaded to {}/{}".format(bucket, path))
             return response
         
     except Exception as e:
@@ -189,7 +213,7 @@ Args:
 Returns:
 <bytesIO> buffer - returns the image content resized.
 """
-def convert_and_resize_portfolio_image(filename, metadata, size, client=None, local=False, test=False):
+def convert_and_resize_portfolio_image(filename, key, metadata, size=None, client=None, local=False, test=False):
     # input validations:
     # verify that all metadata crop coordinates are integers
     try:
@@ -208,7 +232,7 @@ def convert_and_resize_portfolio_image(filename, metadata, size, client=None, lo
         else: path = config["DEFAULT"]["test_dir_local"] + filename
 
         # validate_image(imgpath=None, filename=None, image=None, client=None, local=False)
-        if not validate_image(imgpath=path, filename=filename, client=client, local=local):
+        if not validate_image(key=key, filename=filename, client=client, local=local):
             logging.info("\tInvalid image passed into convert_and_resize")
             raise TypeError
 
@@ -238,7 +262,7 @@ def convert_and_resize_portfolio_image(filename, metadata, size, client=None, lo
                 
     except Exception as e:
         logging.info("\tconvert_and_resize failed with exception {}".format(e))
-        return False, e
+        return e
 
     return whitespace
         
@@ -257,9 +281,7 @@ Returns:
 def watermark_image_with_text(image, metadata, text="Artifyc", local=False):
     try: 
         imageWatermark = Image.new('RGBA', image.size, (255, 255, 255, 0))
-
         draw = ImageDraw.Draw(imageWatermark)
-
         path = config["DEFAULT"]["lambda_font"] if not local else config["DEFAULT"]["local_font"]
         
         width, height = image.size
@@ -282,7 +304,7 @@ def watermark_image_with_text(image, metadata, text="Artifyc", local=False):
     except Exception as e:
 
         logging.info("\twatermark_image_with_text failed with error {}".format(e))
-        return False, e
+        return e
 
     return image
 
@@ -319,4 +341,25 @@ def place_frame_over_image(image, size, color=None, local=False):
 
     except Exception as e:
         logging.info("\tplace_frame_over_image failed with exception: {} - {}".format(type(e).__name__, e))
-        return False, e
+        return e
+
+def crop_profile_image(client, filename, key, metadata, local=False, test=False):
+    try:
+        square_image = convert_and_resize_portfolio_image(filename, key, metadata, config["DEFAULT"]["profile_size"], client, local, test)
+
+        bigsize = (square_image.size[0] * 3, square_image.size[1] * 3)
+        mask = Image.new('L', bigsize, 0)
+        draw = ImageDraw.Draw(mask) 
+
+        draw.ellipse((0, 0) + bigsize, fill=255)
+        mask = mask.resize(square_image.size, Image.ANTIALIAS)
+        square_image.putalpha(mask)
+
+        round_img = ImageOps.fit(square_image, mask.size, centering=(0.5, 0.5))
+        round_img.putalpha(mask)
+
+        return round_img, square_image
+
+    except Exception as e:
+        logging.info("\tcrop_profile_image failed with exception: {} - {}".format(type(e).__name__, e))
+        return e

@@ -24,7 +24,7 @@ Exit the shell at any time with:
 
 `exit`
 
-This contains the precompiled linux version of PIL library, all the work is done for you.
+This contains the precompiled linux version of PIL and numpy libraries, all the work is done for you.
 
 To update the lambda when developing locally, run:
 `./update-lambda`

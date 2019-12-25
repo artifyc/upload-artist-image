@@ -1,10 +1,12 @@
 from lambda_function import handle_portfolio, handle_delivery, handle_profile
-import logging, statistics, math, boto3
+import logging, statistics, math, boto3, configparser
 from pathlib import Path
 from util import *
 from PIL import Image, ImageDraw, ImageFont 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+config = configparser.ConfigParser()
+config.read('configs.ini')
 
 """
 Test to confirm /tmp folder is cleaned out. Creates a new dir tmp and fills with 3 files if local
@@ -431,22 +433,22 @@ def handle_portfolio_test(client, local=False, test=True):
     }
 
     # test case I: give invalid client
-    status, exception = handle_portfolio(None, keys[1], filename[1], correct_metadata, True, True)
+    exception = handle_portfolio(None, keys[1], filename[1], correct_metadata, True, True)
     if type(exception).__name__ == "ValueError": logging.info("\tTest Case I... Passed") 
     else: return False
 
     # test case II: give invalid keys
-    status, exception = handle_portfolio(client, None, filename[1], correct_metadata, True, True)
+    exception = handle_portfolio(client, None, filename[1], correct_metadata, True, True)
     if type(exception).__name__ == "ValueError": logging.info("\tTest Case II... Passed") 
     else: return False
 
     # test case III: give bad filename
-    status, exception = handle_portfolio(client, keys[1], None, correct_metadata, True, True)
-    if type(exception).__name__ == "ValueError": logging.info("\tTest Case III... Passed") 
+    exception = handle_portfolio(client, keys[1], None, correct_metadata, True, True)
+    if type(exception).__name__ == "KeyError": logging.info("\tTest Case III... Passed") 
     else: return False
 
     # test case Iv: give bad metadata
-    status, exception = handle_portfolio(client, keys[1], filename[1], None, True, True)
+    exception = handle_portfolio(client, keys[1], filename[1], None, True, True)
     if type(exception).__name__ == "ValueError": logging.info("\tTest Case IV... Passed") 
     else: return False
 
@@ -458,6 +460,41 @@ def handle_portfolio_test(client, local=False, test=True):
     logging.info("handle_portfolio_test All Tests Passed Successfully!")
     return True
 
+def handle_profile_test(client, local=False, test=False):
+
+    metadata = {"crop-left": 0, "crop-top": 0, "crop-right": 0, "crop-bottom": 0}
+    key = config["DEFAULT"]["samples"]
+    filename = 'spike.jpeg'
+
+    # test case I: give invalid client
+    exception = handle_profile(None, key, filename, metadata, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case I... Passed") 
+    else: return False
+
+    # test case II: give invalid keys
+    exception = handle_profile(client, None, filename, metadata, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case II... Passed") 
+    else: return False
+
+    # test case III: give bad filename
+    exception = handle_profile(client, key, None, metadata, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case III... Passed") 
+    else: return False
+
+    # test case IV: give bad metadata
+    exception = handle_profile(client, key, filename, None, True, True)
+    if type(exception).__name__ == "ValueError": logging.info("\tTest Case IV... Passed") 
+    else: return False
+
+    if handle_profile(client, config["DEFAULT"]["samples"] + 'spike.jpeg', 'spike.jpeg', metadata, local, test):
+        logging.info("\tTest Case V... Passed")
+    else: return False
+
+    logging.info("handle_profile_test All Tests Passed Successfully!")
+    return True
+
+
+
 if __name__ == '__main__':
     client = boto3.client('s3')   
     #validate_filetype_test(True)            
@@ -467,7 +504,8 @@ if __name__ == '__main__':
     #watermark_image_test(True)
     #place_frame_over_image_test(True)
     #tint_frame_test(True)
-    handle_portfolio_test(client, True, True)
+    handle_profile_test(client, True, True)
+
 
 
 # DID SOMEBODY MENTION ART(IFYC)? https://www.youtube.com/watch?v=ru-oHqBJkxY      

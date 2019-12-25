@@ -5,6 +5,7 @@ from util import *
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 config = configparser.ConfigParser()
+config.read('configs.ini')
 
 # Steps:
 # obtain metadata from event photo file
@@ -23,14 +24,22 @@ config = configparser.ConfigParser()
 
 def lambda_handler(event, context, test=False, local=False):
 
-    client = boto3.client('s3')
-    for file in event['Contents']:
-        # parse the filename from the key
-        filename = file['Key'].split("/")[len(file['Key'].split("/"))-1]
-        if validate_image(file['Key'], filename, client):
-            response = client.head_object(Bucket=os.environ["s3_bucket"], Key=file['Key'])
-            # this will just dynamically run the below method that corresponds with what mode the uploaded picture has
-            getattr(sys.modules[__name__], "handle_%s" % response['Metadata']['mode'])(client, file['Key'], filename, response['Metadata'])
+    try:
+        client = boto3.client('s3')
+        for file in event['Contents']:
+            # parse the filename from the key
+            filename = file['Key'].split("/")[len(file['Key'].split("/"))-1]
+            if validate_image(key=file['Key'], bucket=os.environ['buffer_bucket'], filename=filename, client=client):
+                response = client.head_object(Bucket=os.environ['buffer_bucket'], Key=file['Key'])
+                # this will just dynamically run the below method that corresponds with what mode the uploaded picture has
+                getattr(sys.modules[__name__], "handle_%s" % response['Metadata']['mode'])(client, file['Key'], filename, response['Metadata'])
+    
+    except Exception as e:
+        logging.info("\tlambda handler failed with exception: {} - {}".format(type(e).__name__, e))
+        return {
+            'statusCode': 400,
+            'body': json.dumps('Error: {} - {}'.format(type(e).__name__, e))
+        }
 
     return {
         'statusCode': 200,
@@ -59,16 +68,16 @@ def handle_portfolio(client, key, filename, metadata, local=False, test=False):
         for size in sizes:
 
             # convert and crop all images
-            converted_img = convert_and_resize_portfolio_image(filename, metadata, size, client=client, local=local, test=test)
-            if type(converted_img) == tuple: 
-                raise ValueError('convert and resize portfolio image failed with exception: {}'.format(converted_img[1]))
+            converted_img = convert_and_resize_portfolio_image(filename, key, metadata, size, client=client, local=local, test=test)
+            if type(converted_img) == Exception: 
+                raise ValueError('convert and resize portfolio image failed with exception: {}'.format(converted_img))
             logging.info("\tconversion + resize successful")
             
             # watermark logic
             if metadata['watermark'] == 'True': 
                 watermarked_img = watermark_image_with_text(converted_img, metadata, local=local)
-                if type(watermarked_img) == tuple: 
-                    raise ValueError('watermarking image failed with exception: {}'.format(watermarked_img[1]))
+                if type(watermarked_img) == Exception: 
+                    raise ValueError('watermarking image failed with exception: {}'.format(watermarked_img))
             else: 
                 watermarked_img = converted_img
             logging.info("\twatermark successful")
@@ -77,13 +86,13 @@ def handle_portfolio(client, key, filename, metadata, local=False, test=False):
             if "frame-color" in metadata and metadata["frame"]: framed_img = place_frame_over_image(watermarked_img, size, metadata["frame-color"], local)  
             elif metadata["frame"]: framed_img = place_frame_over_image(watermarked_img, size, client)
             else: pass
-            if type(framed_img) == tuple: 
-                raise ValueError('framing image failed with exception: {}'.format(framed_img[1]))
+            if type(framed_img) == Exception: 
+                raise ValueError('framing image failed with exception: {}'.format(framed_img))
             logging.info("\tframing successful")
 
-            response = upload_image(client, metadata, framed_img, size, local=local)
-            if type(response) == tuple: 
-                raise ValueError('uploading image failed with exception: {}'.format(response[1]))
+            response = upload_image(client, metadata, framed_img, size, handle_portfolio.__name__, local=local)
+            if type(response) == Exception: 
+                raise ValueError('uploading image failed with exception: {}'.format(response))
             logging.info("\tuploading successful")
 
         # delete buffered files from /S3 only on local
@@ -91,23 +100,43 @@ def handle_portfolio(client, key, filename, metadata, local=False, test=False):
         # may have to remove files individually
         if not local: 
             cleanup_temp()
-            response = client.delete_object(
-                Bucket=os.environ["s3_bucket"],
-                Key=key + metadata["name"] + ".jpeg"
-            )
+
+        return True
 
     except Exception as e:
         logging.info("\thandle portfolio failed with exception: {} - {}".format(type(e).__name__, e))
-        return False, e
-
-    return True
+        return e
     
 # for profile image
 # convert img to png + resize to circle or at least 125 x 125px
 # upload to S3 under path os.environ["s3_bucket"]/users/artist-uuid/profile.jpg
 # delete img from buffer and from local 
-def handle_profile():
-    return
+def handle_profile(client, key, filename, metadata, local=False, test=False):
+    logging.info("\tEntering profile method..")
+
+    try:
+        if not key: raise ValueError("key passed had value of None")
+        if not client: raise ValueError ("no client passed to handle portfolio method")
+
+        images = crop_profile_image(client, filename, key, metadata, local=False, test=False)
+        if type(images) == Exception: 
+                raise ValueError('convert and resize portfolio image failed with exception: {}'.format(images))
+        logging.info("\tconversion + resize successful")
+
+        response = upload_image(client, metadata, images[0], 'aria', local=local)
+        if type(response) == Exception: 
+            raise ValueError('uploading image failed with exception: {}'.format(response))
+
+        response = upload_image(client, metadata, images[1], 'profile', local=local)
+        if type(response) == Exception: 
+            raise ValueError('uploading image failed with exception: {}'.format(response))
+        logging.info("\tuploading images successful")
+
+        return True
+    
+    except Exception as e:
+        logging.info("\thandle profile failed with exception: {} - {}".format(type(e).__name__, e))
+        return e
 
 # TODO
 
