@@ -102,6 +102,7 @@ def handle_portfolio(client, key, filename, metadata, local=False, test=False):
         # may have to remove files individually
         if not local: 
             cleanup_temp()
+            delete_file(client, key, metadata)
 
         return True
 
@@ -135,6 +136,10 @@ def handle_profile(client, key, filename, metadata, local=False, test=False):
             raise ValueError('uploading image failed with exception: {}'.format(response))
         logging.info("\tuploading images successful")
 
+        if not local: 
+            cleanup_temp()
+            delete_file(client, key, metadata)
+
         return True
     
     except Exception as e:
@@ -144,8 +149,33 @@ def handle_profile(client, key, filename, metadata, local=False, test=False):
 # TODO
 
 # literally this just gets uploaded to S3 under the correct bucket / author name
-def handle_delivery():
-    return
+def handle_delivery(client, key, filename, metadata, local=False, test=False):
+    logging.info("\tEntering handle delivery method..")
+
+    try:
+        if not client: raise ValueError ("no client passed to handle delivery method")
+        if not key: raise ValueError("key passed had value of None")
+        if not filename: raise ValueError("no filename passed to the handle delivery method")
+        if not metadata: raise ValueError("no metadata passed to handle delivery method")
+
+        # validate_image(imgpath=None, filename=None, image=None, client=None, local=False)
+        if not validate_image(key=key, filename=filename, client=client, local=local):
+            logging.info("\tInvalid image passed into convert_and_resize")
+            raise TypeError
+
+        with open(key, 'rb+') as content_file:
+            img = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
+            upload_image(client, metadata, img, "delivery")
+
+        logging.info('\timage uploaded successfully for delivery..')   
+
+        if not local: 
+            cleanup_temp()
+            delete_file(client, key, metadata)
+
+    except Exception as e:
+        logging.info("\thandle delivery failed with exception: {} - {}".format(type(e).__name__, e))
+        return e
 
     # client = s3 client previously created
     # prefix = the filepath within the buffer bucket with particular user's data
