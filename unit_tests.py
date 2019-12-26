@@ -28,7 +28,7 @@ def cleanup_temp_test(local=False):
 
     # counting number of files in this directory
     num_in_directory = len([nme for nme in os.listdir(filepath) if os.path.isfile(os.path.join(filepath, nme))])
-    logging.info("{} files found in directory {}".format(num_in_directory, filepath))
+    logging.info("\t{} files found in directory {}".format(num_in_directory, filepath))
     if num_in_directory != 3: 
         logging.info("Test failed: insufficient number of files created in test directory.")
         return False
@@ -56,9 +56,9 @@ Returns:
 """
 def validate_filetype_test(local=False):
     logging.info("validate_filetype_test Test Entered")
-    path = "tests/tests/validate_filetype_test/" if local else "tests/validate_filetype_test/"
+    path = config["PATHS"]["test_dir_local"] if local else config["PATHS"]["test_dir_lambda"]
     for filename in os.listdir(path):
-        if not validate_image(imgpath=path, filename=filename, local=local): return False
+        if not validate_image(key=path, filename=filename, local=local): return False
     logging.info("validate_filetype_test All Tests Passed Successfully!")
     return True
 
@@ -74,7 +74,7 @@ Returns:
 def tint_frame_test(local=False):
 
     logging.info("tint_frame Test Entered")
-    path = "assets/assets/frames/greyscale/" if local else "assets/frames/greyscale/"
+    path = config["PATHS"]["grey_local"] if local else config["PATHS"]["grey_lambda"]
     # first pass invalid image, size, and color respectively to ensure it returns gold frame
 
     # Test Case I: invalid image is passed, ensure gold frame being returned
@@ -99,7 +99,7 @@ def tint_frame_test(local=False):
                 colors = img.getcolors(img.size[0]*img.size[1])
                 most_common_color = sorted(colors, key=lambda x: x[0], reverse=True)[0]
                 if local: 
-                    img.save("tests/tests/tint_frame_test/{}.png".format(color), "PNG")
+                    img.save(config["PATHS"]["tint_frame_test"] + "{}.png".format(color.lstrip("#")), "PNG")
                     #cleanup_temp("tests/tests/tint_frame_test")
     except Exception as e:
         logging.info("\tTest Case II... Failed\nException: {}".format(e))
@@ -131,8 +131,7 @@ def upload_image_test(client, local=False):
 
     logging.info("upload_image Test Entered")
     # create fake image either on lambda or locally
-    filepath = "/tmp" if not local else "tests/tests/upload_image_test/"
-    path = "tests/tests/upload_image_test/" if local else "tests/upload_image_test/"
+    path = config["PATHS"]["samples"] if local else config["PATHS"]["samples_lambda"]
 
     metadata = {"artist-uuid": "test", "commission-type": "test-type", "name": "testfile"}
     if local: os.environ["s3_bucket"] = "artifyc-user-images-qa"
@@ -141,32 +140,32 @@ def upload_image_test(client, local=False):
         image = Image.open(io.BytesIO(content_file.read())).convert('RGB')
 
         # Test Case I: invalid client is passed to the function
-        status, exception = upload_image(None, metadata, image, "small")
+        exception = upload_image(None, metadata, image, "portfolio", "small", local=local)
         if type(exception).__name__ == "AttributeError": logging.info("\tTest Case I... Passed") 
         else: return False
 
         # Test Case II: invalid metadata is passed to the function
-        status, exception = upload_image(client, None, image, "small")
+        exception = upload_image(client, None, image, "portfolio", "small", local=local)
         if type(exception).__name__ == "ValueError": logging.info("\tTest Case II... Passed") 
         else: return False
 
         # Test Case III: None image passed to the function
-        status, exception = upload_image(client, metadata, None, "small")
+        exception = upload_image(client, metadata, None, "portfolio", "small", local=local)
         if type(exception).__name__ == "ValueError": logging.info("\tTest Case III... Passed") 
         else: return False
 
         # Test Case IV: Invalid image passed to the function
-        status, exception = upload_image(client, metadata, "img", "small")
+        exception = upload_image(client, metadata, "img", "portfolio", "small", local=local)
         if type(exception).__name__ == "AttributeError": logging.info("\tTest Case IV... Passed") 
         else: return False
 
         # Test Case V: Invalid size passed to the function
-        status, exception = upload_image(client, metadata, image, "mega", 4)
+        exception = upload_image(client, metadata, image, "portfolio", "mega", tries=4, local=local)
         if type(exception).__name__ == "ValueError": logging.info("\tTest Case V... Passed") 
         else: return False
 
         # Test Case VI: Invalid tries passed to the function
-        status, exception = upload_image(client, metadata, image, "small", 4)
+        exception = upload_image(client, metadata, image, "portfolio", "small", tries=4, local=local)
         if type(exception).__name__ == "RuntimeError": logging.info("\tTest Case VI... Passed") 
         else: return False
 
@@ -176,7 +175,7 @@ def upload_image_test(client, local=False):
             buffer = io.BytesIO()
             image.save(buffer, format="JPEG")
 
-            response = upload_image(client, metadata, buffer, "small")
+            response = upload_image(client, metadata, buffer, "portfolio", "small", local=local)
             if not response['ResponseMetadata']['HTTPStatusCode'] == 200: 
                 logging.info("\tTest Case VII... Failed with invalid img upload response")
                 return False
@@ -205,31 +204,33 @@ def convert_and_resize_test(local=False):
 
     logging.info("convert_and_resize_test Test Entered")
     # create fake image either on lambda or locally
-    filepath = "tests/tests/convert_and_resize_test/" if local else "tests/convert_and_resize_test/"
+    filepath = config["PATHS"]["samples"] if local else config["PATHS"]["samples_lambda"]
+
+    key = filepath
 
     good_img = "IMG_1967.jpg"
-    small = "225, 300"
-    medium = "415, 615"
+    small = "225,300"
+    medium = "415,615"
     metadata = {"crop-left": 0, "crop-top": 0, "crop-right": 0, "crop-bottom": 0}
     metadata_bad = {"crop-left": "42", "crop-top": 0, "crop-right": 0, "crop-bottom": 0}
     if local: os.environ["s3_bucket"] = "artifyc-user-images-qa"
 
     #(client, filename, metadata, size, local=False, testing=False)
     # Test Case I: invalid filename is passed
-    status, exception = convert_and_resize_portfolio_image(None, metadata, small, local, True)
+    exception = convert_and_resize_portfolio_image(None, key, metadata, size=small, local=local, test=True)
     if type(exception).__name__ == "TypeError": logging.info("\tTest Case I... Passed") 
     else: return False
 
     # Test Case II & III: invalid metadata is passed to the function
-    status, exception = convert_and_resize_portfolio_image(good_img, None, small, local, True)
+    exception = convert_and_resize_portfolio_image(good_img, key, None, size=small, local=local, test=True)
     if type(exception).__name__ == "TypeError": logging.info("\tTest Case II... Passed") 
     else: return False
 
-    status, exception = convert_and_resize_portfolio_image(good_img, metadata_bad, small, local, True)
+    exception = convert_and_resize_portfolio_image(good_img, key, metadata_bad, size=small, local=local, test=True)
     if type(exception).__name__ == "TypeError": logging.info("\tTest Case III... Passed")
 
     # Test Case IV: Invalid sizes passed to the function
-    status, exception = convert_and_resize_portfolio_image(good_img, metadata, "Fakesize", local, True)
+    exception = convert_and_resize_portfolio_image(good_img, key, metadata, size="fakesize", local=local, test=True)
     if type(exception).__name__ == "ValueError": logging.info("\tTest Case IV... Passed") 
     else: return False
 
@@ -237,18 +238,19 @@ def convert_and_resize_test(local=False):
     try:
         for filename in os.listdir(filepath):
             if filename in {'out', 'not_photo.rtf', '.DS_Store'}: continue
-            image = convert_and_resize_portfolio_image(filename, metadata, small, local=local, test=True)
-            image.save(filepath + "out/" + filename, "PNG", quality=90)
-            image = convert_and_resize_portfolio_image(filename, metadata, medium, local=local, test=True)
-            image.save(filepath + "out/medium_" + filename, "PNG", quality=90)
+            image = convert_and_resize_portfolio_image(filename, key, metadata, size=small, local=local, test=True)
+            image.save(config["PATHS"]["convert_resize_path"] + "small_" + filename, "PNG", quality=90)
+            med_image = convert_and_resize_portfolio_image(filename, key, metadata, size=medium, local=local, test=True)
+            med_image.save(config["PATHS"]["convert_resize_path"] + "medium_" + filename, "PNG", quality=90)
             image.close()
+            med_image.close()
     except Exception as e:
         logging.info("\tTest Case V... Failed with exception {}".format(e))
         return False
     logging.info("\tTest Case V... Passed")
 
     # Test Case VI: Pass corrupt or bad image
-    status, exception = convert_and_resize_portfolio_image("not_photo.rtf", metadata, small, local, True)
+    exception = convert_and_resize_portfolio_image("not_photo.rtf", key, metadata, size=small, local=local, test=True)
     if type(exception).__name__ == "TypeError": logging.info("\tTest Case VI... Passed") 
     else: return False
 
@@ -268,28 +270,28 @@ def watermark_image_test(local=False):
 
     # watermark_image_with_text(buffer, filename, metadata, text="Artifyc")
     logging.info("watermark_image_test Test Entered")
-    filepath = "tests/tests/watermark_image_test/" if local else "tests/watermark_image_test/"
+    filepath = config["PATHS"]["samples"] if local else config["PATHS"]["samples_lambda"]
     filename = "uMRP5D9.jpg"
     metadata = {'watermark-location': ''}
     sizes = ['bottom', 'middle', 'top']
 
-    status, exception = watermark_image_with_text(None, metadata, local=local)
+    exception = watermark_image_with_text(None, metadata, local=local)
     if type(exception).__name__ == "AttributeError": logging.info("\tTest Case I... Passed") 
     
     with open(filepath + filename, 'rb+') as content_file:
         original_img = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
 
-        status, exception = watermark_image_with_text(original_img, None, local=local)
+        exception = watermark_image_with_text(original_img, None, local=local)
         if type(exception).__name__ == "TypeError": logging.info("\tTest Case II... Passed") 
 
-        status, exception = watermark_image_with_text(original_img, metadata, local=local)
+        exception = watermark_image_with_text(original_img, metadata, local=local)
         if type(exception).__name__ == "KeyError": logging.info("\tTest Case III... Passed") 
 
         for size in sizes:
             try: 
                 metadata['watermark-location'] = size
                 image = watermark_image_with_text(original_img, metadata, local=local).convert("RGB")
-                image.save((filepath + "out/{}_".format(size) + filename), "JPEG", quality=90)
+                image.save((config["PATHS"]["watermark_test"] + "{}_".format(size) + filename), "JPEG", quality=90)
                 image.close()
             except Exception as e:
                 logging.info("Exception {}: {}".format(size, e))
@@ -313,13 +315,13 @@ def place_frame_over_image_test(local=False):
 
     # place_frame_over_image(image, size, color=None, local=False)
     # Test Case I: attempt with None image
-    size = "width_med"
+    size = "medium"
     colors = ["#ffffff",'#34FAFA']
-    path = "tests/tests/place_frame_over_image_test/"
+    path = config["PATHS"]["samples"] if local else config["PATHS"]["samples_lambda"]
     filename = 'uMRP5D9_resize.jpg'
 
     # test case I, passing invalid image
-    status, exception = place_frame_over_image(None, size, color=None, local=local)
+    exception = place_frame_over_image(None, size, color=None, local=local)
     if type(exception).__name__ == "AttributeError": logging.info("\tTest Case I... Passed") 
     else: return False
 
@@ -328,18 +330,19 @@ def place_frame_over_image_test(local=False):
         original_image = Image.open(io.BytesIO(content_file.read())).convert('RGBA')
 
         # test case II, passing correct image and invalid size
-        status, exception = place_frame_over_image(original_image, None, color=None, local=local)
+        exception = place_frame_over_image(original_image, None, color=None, local=local)
         if type(exception).__name__ == "TypeError": logging.info("\tTest Case II... Passed") 
         else: return False
 
         # test case III, passing correct image, size, no color, should succeed
         framed_image = place_frame_over_image(original_image, size, color=None, local=local)
-        if type(framed_image) == tuple: 
+        if type(framed_image) == Exception: 
             logging.info("\tTest Case III... Failed") 
             return False
-        else: 
+        else:
+            logging.info(framed_image)
             framed_image = framed_image.convert("RGB")
-            framed_image.save(path + "out/{}_".format(size) + filename, "JPEG", quality=90)
+            framed_image.save(config["PATHS"]["place_frame_test"] + "{}_".format(size) + filename, "JPEG", quality=90)
         logging.info("\tTest Cases III... Passed")
 
         # for test cases IV & V, passing correct img, size, and now color
@@ -350,7 +353,7 @@ def place_frame_over_image_test(local=False):
                 return False
             else: 
                 new_image = new_image.convert("RGB")
-                new_image.save(path + "out/{}_".format(color.lstrip('#')) + filename, "JPEG", quality=90)
+                new_image.save(config["PATHS"]["place_frame_test"] + "{}_".format(color.lstrip('#')) + filename, "JPEG", quality=90)
         logging.info("\tTest Cases IV & V... Passed")
 
     content_file.close()
@@ -493,18 +496,16 @@ def handle_profile_test(client, local=False, test=False):
     logging.info("handle_profile_test All Tests Passed Successfully!")
     return True
 
-
-
 if __name__ == '__main__':
     client = boto3.client('s3')   
     #validate_filetype_test(True)            
     #cleanup_temp_test(True)                      
     #upload_image_test(client, True)
-    #convert_and_resize_test(True)
+    convert_and_resize_test(True)
     #watermark_image_test(True)
     #place_frame_over_image_test(True)
     #tint_frame_test(True)
-    handle_profile_test(client, True, True)
+    #handle_profile_test(client, True, True)
 
 
 

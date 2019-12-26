@@ -62,6 +62,7 @@ def handle_portfolio(client, key, filename, metadata, local=False, test=False):
         if not key: raise ValueError("key passed had value of None")
         if not client: raise ValueError ("no client passed to handle portfolio method")
         if not filename: raise ValueError("no filename passed to the handle profile method")
+        if not metadata: raise ValueError("no metadata passed to handle profile method")
 
         sizes = [config['DEFAULT']["small"], config['DEFAULT']["medium"]] if local else [os.environ["small"], os.environ["medium"]]
 

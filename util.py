@@ -64,7 +64,7 @@ Returns:
 """
 def validate_image(key=None, bucket=None, filename=None, image=None, client=None, local=False):
     # this check necessary because may be passed foldernames
-    logging.info(str(key))
+    if filename is not None: key = key + filename
     if image:
         try:
             image.verify()
@@ -74,7 +74,6 @@ def validate_image(key=None, bucket=None, filename=None, image=None, client=None
             return False
 
     if key.endswith(tuple(config['DEFAULT']['valid_filepaths'].split(','))):
-        logging.info("\tkey ends with valid extention")
         # fetch actual photo and download it to the lambda
         if not local:
             client.download_file(bucket, key, str(config['PATHS']['image_path'] + filename))
@@ -111,7 +110,7 @@ def tint_frame(image, color, size, local=False):
 
     except Exception as e:
         logging.info("\ttint_frame failed with exception: {}. Falling back to gold...".format(e))
-        path = config["PATHS"]["asset_dir_local"] if local else config["PATHS"]["asset_dir_lambda"]
+        path = config["PATHS"]["gold_local"] if local else config["PATHS"]["gold_lambda"]
         filename = config["IMAGES"]["medium_frame"] if "medium" in size else config["IMAGES"]["small_frame"]
 
         # open regular gold frame file
@@ -225,8 +224,9 @@ def convert_and_resize_portfolio_image(filename, key, metadata, size=None, clien
     # input validations:
     # verify that all metadata crop coordinates are integers
     try:
-        if not [value for key, value in metadata.items() if 'crop' in key.lower()]:
-            raise ValueError("metadata was passed with invalid value")
+        if not metadata: raise TypeError("metadata was passed with invalid value")
+        if not filename: raise TypeError("filename not passed to convert and resize")
+        if not key: raise TypeError("key not passed to convert and resize")
 
         if not all([isinstance(x, numbers.Number) for x in (metadata['crop-left'], metadata['crop-right'], metadata['crop-top'], metadata['crop-bottom'])]):
             logging.info("\tInvalid metadata passed into convert_and_resize, converting...")
@@ -272,7 +272,7 @@ def convert_and_resize_portfolio_image(filename, key, metadata, size=None, clien
             whitespace.paste(image, (centered_width, centered_height))
                 
     except Exception as e:
-        logging.info("\tconvert_and_resize failed with exception {}".format(traceback.print_exc()))
+        logging.info("\tconvert_and_resize failed with exception {}".format(e))
         return e
 
     return whitespace
@@ -333,11 +333,11 @@ Returns:
 def place_frame_over_image(image, size, color=None, local=False):
     # determine whether to use med or small frame
     try:
+        image.convert('RGBA')
         filename = config["IMAGES"]["medium_frame"] if "medium" in size else config["IMAGES"]["small_frame"]
         backup_path = config["PATHS"]["gold_lambda"] if not local else config["PATHS"]["gold_local"]
         path = config["PATHS"]["grey_lambda"] if not local else config["PATHS"]["grey_local"]
-        image.convert('RGBA')
-        final_path = backup_path if color is None else path 
+        final_path = backup_path if color is None else path
 
         with open(final_path + filename, 'rb+') as content_file:
             content = content_file.read()
@@ -354,6 +354,18 @@ def place_frame_over_image(image, size, color=None, local=False):
         logging.info("\tplace_frame_over_image failed with exception: {} - {}".format(type(e).__name__, e))
         return e
 
+"""
+Crops profile images and creates one square, one round
+Args:
+<S3Client> client- the boto3 S3 client.
+<str> filename - the name of the file being uploaded.
+<int> size - base width used to the resize process.
+<Dict> metadata - image metadata with config info.
+<bool> local - indicates whether this method is being run locally or on a lambda.
+<bool> test - indicates whether this is a test.
+Returns:
+<Image> output, <Image> square_image - returns the image content rounded and square.
+"""
 def crop_profile_image(client, filename, key, metadata, local=False, test=False):
     try:
         square_image = convert_and_resize_portfolio_image(filename, key, metadata, config["SIZES"]["profile_size"], client, local, test)
